@@ -1,0 +1,12 @@
+openai
+langchain
+pymongo
+python-dotenv
+fastapi
+uvicorn
+tqdm
+requests
+bs4
+unstructured
+chromadb
+sentence-transformers
