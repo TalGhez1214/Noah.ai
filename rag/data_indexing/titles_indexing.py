@@ -51,8 +51,8 @@ dim = X.shape[1]
 index = faiss.IndexFlatL2(dim)
 index.add(X)
 
-faiss.write_index(index, "toi_titles.index")
-with open("toi_titles_meta.pkl", "wb") as f:
+faiss.write_index(index, "titles.index")
+with open("titles_metadata.pkl", "wb") as f:
     pickle.dump(meta, f)
 
 print(f"Stored {len(meta)} titles in FAISS index.")

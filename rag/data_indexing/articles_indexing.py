@@ -64,10 +64,10 @@ index = faiss.IndexFlatL2(dimension) # Create a flat index for L2 distance
 index.add(embeddings_np) # Add embeddings to the index
 
 # Save index & metadata
-faiss.write_index(index, "toi.index") # Save the FAISS index to a file
+faiss.write_index(index, "articles.index") # Save the FAISS index to a file
 # Save metadata to a pickle file for later retrieval
 import pickle
-with open("toi_metadata.pkl", "wb") as f:
+with open("articles_metadata.pkl", "wb") as f:
     pickle.dump(metadata, f) # Save metadata to a binary file
 
 print(f"Stored {len(metadata)} articles in FAISS index.")

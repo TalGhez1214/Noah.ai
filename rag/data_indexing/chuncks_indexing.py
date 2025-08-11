@@ -22,8 +22,16 @@ col = MongoClient(MONGO_URI)[DB][COLL]
 # ----- tokenizer (gpt-4o/gpt-3.5 compatible)
 enc = tiktoken.get_encoding("cl100k_base")
 
-def chunk_text(text, chunk_tokens=500, overlap_tokens=50):
-    """Split text into overlapping token chunks."""
+def chunk_text(text, chunk_tokens=400, overlap_tokens=40):
+    """Split text into overlapping token chunks.
+    
+    Args:
+        text (str): The text to chunk.
+        chunk_tokens (int): Number of tokens per chunk.
+        overlap_tokens (int): Number of overlapping tokens between chunks.
+    Returns:
+        List[str]: List of text chunks.
+    """
     if not text:
         return []
     toks = enc.encode(text)
@@ -55,7 +63,7 @@ for d in docs:
     content = (d.get("content") or "").strip()
     if not content:
         continue
-    chunks = chunk_text(content, chunk_tokens=500, overlap_tokens=50)
+    chunks = chunk_text(content, chunk_tokens=400, overlap_tokens=40)
     for i, ch in enumerate(chunks):
         vec = embed(ch)
         embeds.append(vec)
@@ -78,8 +86,8 @@ dim = X.shape[1]
 index = faiss.IndexFlatL2(dim)
 index.add(X)
 
-faiss.write_index(index, "toi_chunks.index")
-with open("toi_chunks_meta.pkl", "wb") as f:
+faiss.write_index(index, "./rag/data_indexing//indexes_and_metadata_files/chunks.index")
+with open("./rag/data_indexing//indexes_and_metadata_files/chunks_metadata.pkl", "wb") as f:
     pickle.dump(meta, f)
 
 print(f"✅ Built chunked index: {len(meta)} chunks from {len(docs)} articles.")

@@ -6,91 +6,100 @@ from openai import OpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-def _embed(q: str) -> np.ndarray:
-    v = client.embeddings.create(model="text-embedding-3-small", input=q).data[0].embedding
-    return np.array(v, dtype=np.float32).reshape(1, -1)
-
-def _l2_to_sim(d: float) -> float:
-    """
-    Convert an L2 (Euclidean) distance into a similarity score between 0 and 1.
-
-    Args:
-        d (float): The L2 distance between two vectors (smaller = more similar).
-
-    Returns:
-        float: Similarity score where higher means more similar.
-
-    Notes:
-        - FAISS with IndexFlatL2 returns distances; we invert them into a similarity metric
-          for easier scoring.
-        - Formula: similarity = 1 / (1 + distance)
-        - This is simple; other transformations (e.g., negative distance) are also possible.
-    """
-    return 1.0 / (1.0 + d)
-
-
-def _parse_dt(s: str):
-    """
-    Safely parse a date/time string into a Python datetime object.
-
-    Args:
-        s (str): A date/time string (ISO8601, RFC2822, etc.), or None.
-
-    Returns:
-        datetime or None: Parsed datetime (timezone-aware if input has timezone info),
-        or None if parsing fails.
-
-    Notes:
-        - Uses `dateutil.parser.parse` which supports many date formats.
-        - Returns None if parsing fails or if input is None.
-    """
-    try:
-        return dtparser.parse(s) if s else None
-    except:
-        return None
-
-
-def _recency_weight(dt, half_life_days=30) -> float:
-    """
-    Compute a 'freshness score' for a document based on how recent it is.
-
-    Args:
-        dt (datetime): The publication date/time of the document.
-        half_life_days (int, optional): The number of days for the score to decay by half.
-                                        Defaults to 30.
-
-    Returns:
-        float: Recency weight between 0 and 1, higher = more recent.
-
-    Notes:
-        - If `dt` is None, return a default penalty (0.6).
-        - The formula is exponential decay: weight = 0.5 ^ (age_days / half_life_days)
-          This means:
-            * age_days = 0 → weight = 1.0 (fresh)
-            * age_days = half_life_days → weight = 0.5
-            * age_days = 2 × half_life_days → weight = 0.25
-        - This allows newer docs to be ranked higher even if their semantic similarity
-          is slightly lower.
-    """
-    if not dt:
-        return 0.6  # penalize but don't eliminate - Maybe use a different value?
-    now = datetime.now(timezone.utc)
-    doc_age = max(0, (now - dt).days)
-    return 0.5 ** (doc_age / float(half_life_days)) # 2^(doc_age / half_life_days) - ^ = ** in Python
 
 class RAGRetriever:
-    def __init__(self, base_path="./rag/data_indexing/indeces_and_metadata_files"):
+    def __init__(self, index_and_metadata_base_path="./rag/data_indexing/indexes_and_metadata_files"):
         # Load all three indexes + metadata
-        self.article_idx = faiss.read_index(os.path.join(base_path, "article.index"))
-        self.article_meta = pickle.load(open(os.path.join(base_path, "article_meta.pkl"), "rb"))
+        self.article_idx = faiss.read_index(os.path.join(index_and_metadata_base_path, "articles.index"))
+        self.article_meta = pickle.load(open(os.path.join(index_and_metadata_base_path, "articles_metadata.pkl"), "rb"))
 
-        self.chunk_idx = faiss.read_index(os.path.join(base_path, "chunks.index"))
-        self.chunk_meta = pickle.load(open(os.path.join(base_path, "chunks_meta.pkl"), "rb"))
+        self.chunk_idx = faiss.read_index(os.path.join(index_and_metadata_base_path, "chunks.index"))
+        self.chunk_meta = pickle.load(open(os.path.join(index_and_metadata_base_path, "chunks_metadata.pkl"), "rb"))
 
-        self.title_idx = faiss.read_index(os.path.join(base_path, "titles.index"))
-        self.title_meta = pickle.load(open(os.path.join(base_path, "titles_meta.pkl"), "rb"))
+        self.title_idx = faiss.read_index(os.path.join(index_and_metadata_base_path, "titles.index"))
+        self.title_meta = pickle.load(open(os.path.join(index_and_metadata_base_path, "titles_metadata.pkl"), "rb"))
+
+        self._client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+    def _query_embed(self, q: str) -> np.ndarray:
+        """
+        This function generates an embedding for the given query using OpenAI's API.
+        Args:
+            q (str): The query to generate an embedding for.
+        Returns:
+            np.ndarray: The generated embedding as a NumPy array with size (1536,) ready for FAISS indexing.
+        """
+        v = self._client.embeddings.create(model="text-embedding-3-small", input=q).data[0].embedding
+        return np.array(v, dtype=np.float32).reshape(1, -1)
+
+    def _l2_to_sim(self, d: float) -> float:
+        """
+        Convert an L2 (Euclidean) distance into a similarity score between 0 and 1.
+
+        Args:
+            d (float): The L2 distance between two vectors (smaller = more similar).
+
+        Returns:
+            float: Similarity score where higher means more similar.
+
+        Notes:
+            - FAISS with IndexFlatL2 returns distances; we invert them into a similarity metric
+            for easier scoring.
+            - Formula: similarity = 1 / (1 + distance)
+            - This is simple; other transformations (e.g., negative distance) are also possible.
+        """
+        return 1.0 / (1.0 + d)
+
+
+    def _parse_dt(self, s: str):
+        """
+        Safely parse a date/time string into a Python datetime object.
+
+        Args:
+            s (str): A date/time string (ISO8601, RFC2822, etc.), or None.
+
+        Returns:
+            datetime or None: Parsed datetime (timezone-aware if input has timezone info),
+            or None if parsing fails.
+
+        Notes:
+            - Uses `dateutil.parser.parse` which supports many date formats.
+            - Returns None if parsing fails or if input is None.
+        """
+        try:
+            return dtparser.parse(s) if s else None
+        except:
+            return None
+
+
+    def _recency_weight(self, dt, half_life_days=30) -> float:
+        """
+        Compute a 'freshness score' for a document based on how recent it is.
+
+        Args:
+            dt (datetime): The publication date/time of the document.
+            half_life_days (int, optional): The number of days for the score to decay by half.
+                                            Defaults to 30.
+
+        Returns:
+            float: Recency weight between 0 and 1, higher = more recent.
+
+        Notes:
+            - If `dt` is None, return a default penalty (0.6).
+            - The formula is exponential decay: weight = 0.5 ^ (age_days / half_life_days)
+            This means:
+                * age_days = 0 → weight = 1.0 (fresh)
+                * age_days = half_life_days → weight = 0.5
+                * age_days = 2 × half_life_days → weight = 0.25
+            - This allows newer docs to be ranked higher even if their semantic similarity
+            is slightly lower.
+        """
+        if not dt:
+            return 0.6  # penalize but don't eliminate - Maybe use a different value?
+        now = datetime.now(timezone.utc)
+        doc_age = max(0, (now - dt).days)
+        return 0.5 ** (doc_age / float(half_life_days)) # 2^(doc_age / half_life_days) - ^ = ** in Python
 
     def _search_index(self, index_file, meta_file, user_query, k_initial_matches, k_final_matches, use_recency_weight = True,half_life_days = 30, min_days_window=None):
 
@@ -128,7 +137,7 @@ class RAGRetriever:
         """
 
         # 1. Convert query text → vector
-        query_vector = _embed(user_query)
+        query_vector = self._query_embed(user_query)
 
         # 2. Search FAISS index: get distances + vector IDs
         dists, ids = index_file.search(query_vector, k_initial_matches) # return the k_initial_matches nearest ones using your distance metric (L2 in this case)
@@ -148,10 +157,10 @@ class RAGRetriever:
             m = meta_file[i]
 
             # 5. Convert distance to similarity (higher = more similar)
-            sim = _l2_to_sim(dist)
+            sim = self._l2_to_sim(dist)
 
             # 6. Parse publication date
-            dt = _parse_dt(m.get("published_at"))
+            dt = self._parse_dt(m.get("published_at"))
 
             # 7. If cutoff window is set, skip too-old items
             if min_days_window is not None and dt is not None:
@@ -160,7 +169,7 @@ class RAGRetriever:
 
             # 8. Compute recency weight (boost newer results)
             if use_recency_weight:
-                rw = _recency_weight(dt, half_life_days=half_life_days)
+                rw = self._recency_weight(dt, half_life_days=half_life_days)
             else:
                 rw = 1.0
 
