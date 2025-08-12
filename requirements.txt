@@ -1,12 +1,28 @@
-openai
-langchain
-pymongo
+# --- Core LLM stack
+openai>=1.0.0
+langchain>=0.2,<0.3
+langchain-community>=0.2,<0.3
 python-dotenv
-fastapi
-uvicorn
-tqdm
+
+# --- API
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# --- Data / RAG
+faiss-cpu
+numpy>=1.24
+tiktoken
+python-dateutil
+
+# --- DB
+pymongo>=4.6
+
+# --- (Optional) scraping / parsing
 requests
-bs4
+tqdm
+beautifulsoup4
 unstructured
+
+# --- (Optional, remove if not used)
 chromadb
 sentence-transformers
