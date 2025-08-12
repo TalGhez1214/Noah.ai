@@ -2,9 +2,9 @@ from agents.sub_agents.qa import QASubAgent
 from agents.sub_agents.summarizer import SummarySubAgent
 from rag.rag_piplines.rag_retriever import RAGRetriever
 
-from langchain.chat_models import ChatOpenAI
-from langchain.prompts import PromptTemplate
+from langchain_openai import ChatOpenAI
 from langchain.chains import LLMChain
+from langchain.prompts import PromptTemplate
 
 class ManagerAgent:
     def __init__(self):
