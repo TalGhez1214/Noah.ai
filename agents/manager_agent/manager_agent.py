@@ -1,4 +1,3 @@
-# agents/manager_agent/manager_agent.py
 from typing import TypedDict, Annotated, Literal
 import operator
 import re
@@ -12,14 +11,22 @@ from agents.prompts import SUPERVISOR_PROMPT
 from agents.sub_agents.qa import build_qa_agent
 from agents.sub_agents.summarizer import build_summary_agent
 
+# Use your existing retriever
+from rag.rag_piplines.rag_retriever import RAGRetriever  # adjust path if needed
+
 class AgentState(TypedDict, total=False):
     messages: Annotated[list[BaseMessage], operator.add]
     agent: str
 
 class ManagerAgent:
     def __init__(self, model: str = "gpt-4o-mini"):
-        self.qa_app = build_qa_agent(model)
-        self.summary_app = build_summary_agent(model)
+        # shared retriever
+        self.retriever = RAGRetriever()
+
+        # pass retriever into sub-agents so their tools can call it
+        self.qa_app = build_qa_agent(self.retriever, model=model)
+        self.summary_app = build_summary_agent(self.retriever, model=model)
+
         self.router_llm = ChatOpenAI(model=model, temperature=0)
 
         graph = StateGraph(AgentState)
