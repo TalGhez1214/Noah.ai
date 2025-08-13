@@ -100,6 +100,21 @@ class RAGRetriever:
         now = datetime.now(timezone.utc)
         doc_age = max(0, (now - dt).days)
         return 0.5 ** (doc_age / float(half_life_days)) # 2^(doc_age / half_life_days) - ^ = ** in Python
+    
+    def normalize_metadata(self, meta: dict) -> dict:
+        """Return a uniform dict for any index."""
+        out = {
+            "title": meta.get("title", None),
+            "url": meta.get("url", None),
+            "content": meta.get("content", None),                          
+            "author": meta.get("author", None),
+            "published_at": meta.get("published_at", None),
+            "chunk": meta.get("chunk", None), 
+            "chunk_id": meta.get("chunk_id", None),                 
+        }
+
+        return out
+
 
     def _search_index(self, index_file, meta_file, user_query, k_initial_matches, k_final_matches, use_recency_weight = True,half_life_days = 30, min_days_window=None):
 
@@ -176,16 +191,15 @@ class RAGRetriever:
             # 9. Final score = semantic similarity * recency weight
             final_score = sim * rw
 
+            # 10. Normalize metadata for consistent output
+            metadata_i = self.normalize_metadata(metadata_i)
+            metadata_i["final_score"] = final_score
+            
             # 10. Add to candidate list
-            cands.append({"score": final_score, 
-                          "index": i, 
-                          "sim": sim, 
-                          "rw": rw, 
-                          "metadata": metadata_i
-                          })
+            cands.append(metadata_i)
 
         # 11. Sort candidates by final score (descending)
-        cands.sort(key=lambda x: x["score"], reverse=True)
+        cands.sort(key=lambda x: x["final_score"], reverse=True)
 
         # 12. Return top-k_final_matches results
         return cands[:k_final_matches]

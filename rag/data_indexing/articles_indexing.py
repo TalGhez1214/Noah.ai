@@ -24,7 +24,8 @@ docs = list(
             "title": 1,     # include title
             "url": 1,       # include URL
             "content": 1,   # include full text
-            "author": 1     # include author
+            "author": 1,     # include author
+            "published_at": 1  # include published date
         }
     )
 )
@@ -54,13 +55,7 @@ for doc in docs:
         continue
     content_vector = embed_text(doc["content"])
     embeddings.append(content_vector)
-    meta.append({
-            "url": doc.get("url"),
-            "published_at": doc.get("published_at"),  # ISO string or None
-            "author": doc.get("author"),
-            "title": doc.get("title"),
-            "indexed_doc": doc.get("content")
-        })
+    meta.append(doc)
 
 embeddings_np = np.vstack(embeddings)
 

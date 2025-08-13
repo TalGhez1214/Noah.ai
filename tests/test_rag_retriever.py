@@ -157,9 +157,9 @@ def test_retrieve_chunk(rag_retriever):
     print(f"Retrieved {len(results)} chunks for query '{query}':\n\n")
 
     for res in results:
-        print(f"Score: {res["score"]}, Index: {res["index"]}, Similarity: {res["sim"]}, Recency Weight: {res["rw"]}\n\n")
-        print(f"Text: {res["metadata"]['indexed_doc'][:100]}...\n\n")
-        print(f"text word count: {len(res["metadata"]['indexed_doc'].split())}\n\n")
+        print(f"Score: {res["final_score"]}\n\n")
+        print(f"Text: {res['content'][:100]}...\n\n")
+        print(f"text word count: {len(res['chunk'].split())}\n\n")
         print("-" * 80)
 
 def test_retrieve_title(rag_retriever):
@@ -179,6 +179,6 @@ def test_retrieve_title(rag_retriever):
 
     print(f"Retrieved {len(results)} titles for query '{query}':\n\n")
     for res in results:
-        print(f"Score: {res["score"]}, Index: {res["index"]}, Similarity: {res["sim"]}, Recency Weight: {res["rw"]}\n\n")
-        print(f"Title: {res["metadata"]['title']}\n")
+        print(f"Score: {res["final_score"]}\n\n")
+        print(f"Title: {res['title']}\n")
         print("-" * 80)

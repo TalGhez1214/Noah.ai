@@ -74,7 +74,7 @@ for doc in docs:
             "author": doc.get("author"),
             "content": doc.get("content"),
             "chunk_id": i,
-            "indexed_doc": ch
+            "chunk": ch
         })
 
 if not embeds:
