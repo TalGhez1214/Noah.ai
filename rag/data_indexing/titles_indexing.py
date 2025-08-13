@@ -28,7 +28,7 @@ def embed(text: str) -> np.ndarray:
     return np.array(v, dtype=np.float32)
 
 # ----- fetch docs
-docs = list(col.find({}, {"_id": 0, "title": 1, "url": 1, "content": 1, "published_at": 1}))
+docs = list(col.find({}, {"_id": 0, "title": 1, "url": 1, "content": 1, "published_at": 1, "author": 1}))
 
 embeds = []
 meta = []
@@ -39,13 +39,7 @@ for doc in docs:
         continue
     vec = embed(title)
     embeds.append(vec)
-    meta.append({
-            "url": doc.get("url"),
-            "published_at": doc.get("published_at"),  # ISO string or None
-            "author": doc.get("author"),
-            "content": doc.get("content"),
-            "indexed_doc": doc.get("title")
-        })
+    meta.append(doc)
 
 if not embeds:
     raise SystemExit("No chunks to index. Check your Mongo collection content.")
