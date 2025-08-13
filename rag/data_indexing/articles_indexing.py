@@ -48,13 +48,19 @@ def embed_text(text):
 
 # 3. Store embeddings + metadata
 embeddings = [] # List to hold embeddings
-metadata = [] # List to hold metadata - articles content 
+meta = [] # List to hold metadata - articles content 
 for doc in docs:
     if not doc.get("content"):
         continue
     content_vector = embed_text(doc["content"])
     embeddings.append(content_vector)
-    metadata.append(doc)
+    meta.append({
+            "url": doc.get("url"),
+            "published_at": doc.get("published_at"),  # ISO string or None
+            "author": doc.get("author"),
+            "title": doc.get("title"),
+            "indexed_doc": doc.get("content")
+        })
 
 embeddings_np = np.vstack(embeddings)
 
@@ -68,8 +74,8 @@ faiss.write_index(index, "articles.index") # Save the FAISS index to a file
 # Save metadata to a pickle file for later retrieval
 import pickle
 with open("articles_metadata.pkl", "wb") as f:
-    pickle.dump(metadata, f) # Save metadata to a binary file
+    pickle.dump(meta, f) # Save metadata to a binary file
 
-print(f"Stored {len(metadata)} articles in FAISS index.")
+print(f"Stored {len(meta)} articles in FAISS index.")
 
 

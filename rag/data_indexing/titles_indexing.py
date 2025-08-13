@@ -39,7 +39,13 @@ for doc in docs:
         continue
     vec = embed(title)
     embeds.append(vec)
-    meta.append(doc)
+    meta.append({
+            "url": doc.get("url"),
+            "published_at": doc.get("published_at"),  # ISO string or None
+            "author": doc.get("author"),
+            "content": doc.get("content"),
+            "indexed_doc": doc.get("title")
+        })
 
 if not embeds:
     raise SystemExit("No chunks to index. Check your Mongo collection content.")

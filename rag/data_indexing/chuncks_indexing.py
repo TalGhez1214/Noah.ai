@@ -59,8 +59,8 @@ docs = list(col.find({}, {"_id": 0, "title": 1, "url": 1, "content": 1, "publish
 embeds = []
 meta = []
 
-for d in docs:
-    content = (d.get("content") or "").strip()
+for doc in docs:
+    content = (doc.get("content") or "").strip()
     if not content:
         continue
     chunks = chunk_text(content, chunk_tokens=400, overlap_tokens=40)
@@ -68,12 +68,13 @@ for d in docs:
         vec = embed(ch)
         embeds.append(vec)
         meta.append({
-            "title": d.get("title"),
-            "url": d.get("url"),
-            "published_at": d.get("published_at"),  # ISO string or None
-            "author": d.get("author"),
+            "title": doc.get("title"),
+            "url": doc.get("url"),
+            "published_at": doc.get("published_at"),  # ISO string or None
+            "author": doc.get("author"),
+            "content": doc.get("content"),
             "chunk_id": i,
-            "text": ch
+            "indexed_doc": ch
         })
 
 if not embeds:

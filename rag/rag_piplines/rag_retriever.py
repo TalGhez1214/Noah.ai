@@ -154,13 +154,13 @@ class RAGRetriever:
                 continue
 
             # 4. Get metadata for this vector
-            m = meta_file[i]
+            metadata_i = meta_file[i]
 
             # 5. Convert distance to similarity (higher = more similar)
             sim = self._l2_to_sim(dist)
 
             # 6. Parse publication date
-            dt = self._parse_dt(m.get("published_at"))
+            dt = self._parse_dt(metadata_i.get("published_at"))
 
             # 7. If cutoff window is set, skip too-old items
             if min_days_window is not None and dt is not None:
@@ -177,15 +177,20 @@ class RAGRetriever:
             final_score = sim * rw
 
             # 10. Add to candidate list
-            cands.append((final_score, i, sim, rw, m))
+            cands.append({"score": final_score, 
+                          "index": i, 
+                          "sim": sim, 
+                          "rw": rw, 
+                          "metadata": metadata_i
+                          })
 
         # 11. Sort candidates by final score (descending)
-        cands.sort(key=lambda x: x[0], reverse=True)
+        cands.sort(key=lambda x: x["score"], reverse=True)
 
         # 12. Return top-k_final_matches results
         return cands[:k_final_matches]
 
-    def retrieve(self, question, mode="auto", k_initial_matches=80, k_final_matches=6):
+    def retrieve(self, question, mode, k_initial_matches=80, k_final_matches=6):
         if mode == "article":
             return self._search_index(index_file = self.article_idx, 
                                       meta_file = self.article_meta, 
@@ -209,4 +214,4 @@ class RAGRetriever:
                                       )
 
 
-    
+  
