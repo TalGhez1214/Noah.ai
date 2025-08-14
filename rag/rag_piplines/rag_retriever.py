@@ -116,7 +116,7 @@ class RAGRetriever:
         return out
 
 
-    def _search_index(self, index_file, meta_file, user_query, k_initial_matches, k_final_matches, use_recency_weight = True,half_life_days = 30, min_days_window=None):
+    def _search_index(self, index_file, meta_file, user_query, k_initial_matches, k_final_matches, use_recency_weight = False, half_life_days = 30, min_days_window=None):
 
         """
         Search a given FAISS index_file and return the top results, re-ranked by recency.
@@ -165,6 +165,7 @@ class RAGRetriever:
 
         # 3. Iterate over search results
         for dist, i in zip(dists, ids):
+            print(f"Processing vector ID {i} with distance {dist:.4f}\n\n")
             if i < 0:  # invalid ID (padding from FAISS if fewer than k_initial_matches results)
                 continue
 
@@ -194,10 +195,14 @@ class RAGRetriever:
             # 10. Normalize metadata for consistent output
             metadata_i = self.normalize_metadata(metadata_i)
             metadata_i["final_score"] = final_score
+            print(f"Final score for vector ID {i}: {final_score:.4f}\n\n")
+            print(f"title for vector ID {i}: {metadata_i['title']}\n\n")
+            print(f"Metadata for vector ID {i}: {metadata_i['chunk']}")
+            print("#" * 80)
             
             # 10. Add to candidate list
             cands.append(metadata_i)
-
+        
         # 11. Sort candidates by final score (descending)
         cands.sort(key=lambda x: x["final_score"], reverse=True)
 
