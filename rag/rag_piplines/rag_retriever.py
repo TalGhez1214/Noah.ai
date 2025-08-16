@@ -4,23 +4,38 @@ from datetime import datetime, timezone
 from dateutil import parser as dtparser
 from openai import OpenAI
 from dotenv import load_dotenv
+from pymongo import MongoClient
 
 load_dotenv()
+
+MONGO_URI = os.getenv("MONGODB_URI")
+DB = os.getenv("DB_NAME", "news")
+COLL = os.getenv("COLLECTION_NAME", "toi_articles")
 
 
 class RAGRetriever:
     def __init__(self, index_and_metadata_base_path="./rag/data_indexing/indexes_and_metadata_files"):
-        # Load all three indexes + metadata
+        # Load all 4 indexes + metadata
+
+        # article + auther + content index
+        self.full_content_idx = faiss.read_index(os.path.join(index_and_metadata_base_path, "full_article_content.index"))
+        self.full_content_meta = pickle.load(open(os.path.join(index_and_metadata_base_path, "full_article_content_metadata.pkl"), "rb"))
+
+        # article index
         self.article_idx = faiss.read_index(os.path.join(index_and_metadata_base_path, "articles.index"))
         self.article_meta = pickle.load(open(os.path.join(index_and_metadata_base_path, "articles_metadata.pkl"), "rb"))
 
+        # article chunks index
         self.chunk_idx = faiss.read_index(os.path.join(index_and_metadata_base_path, "chunks.index"))
         self.chunk_meta = pickle.load(open(os.path.join(index_and_metadata_base_path, "chunks_metadata.pkl"), "rb"))
 
+        # article titles index
         self.title_idx = faiss.read_index(os.path.join(index_and_metadata_base_path, "titles.index"))
         self.title_meta = pickle.load(open(os.path.join(index_and_metadata_base_path, "titles_metadata.pkl"), "rb"))
 
         self._client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        # ----- connect Mongo
+        self._mongo = MongoClient(MONGO_URI)[DB][COLL]
 
     def _query_embed(self, q: str) -> np.ndarray:
         """
@@ -115,8 +130,7 @@ class RAGRetriever:
 
         return out
 
-
-    def _search_index(self, index_file, meta_file, user_query, k_initial_matches, k_final_matches, use_recency_weight = False, half_life_days = 30, min_days_window=None):
+    def _semantic_search(self, index_file, meta_file, user_query, k_semantic_matches=20):
 
         """
         Search a given FAISS index_file and return the top results, re-ranked by recency.
@@ -130,37 +144,21 @@ class RAGRetriever:
             query (str): The user query to search for.
             k_initial_matches (int): How many top matches should we ask FAISS for.
             k_final_matches (int): Number of top results to return after re-ranking.
-            half_life_days (int): Recency decay parameter. Lower = faster decay in score.
-            min_days_window (int or None): Optional cutoff; discard results older than this
-                                        many days. If None, keep all.
 
         Returns:
             list[tuple]: A list of up to k_final tuples:
                 (final_score, index_id, similarity, recency_weight, metadata_dict)
-
-        Processing steps:
-            1. **Embed the query** into a vector (using `_embed`).
-            2. **Search FAISS** for top-k_search nearest vectors (L2 distance).
-            3. **Convert distances to similarity** with `_l2_to_sim`.
-            4. **Parse publication date** from metadata with `_parse_dt`.
-            5. If `min_days_window` is set, **skip old results** beyond that window.
-            6. **Compute recency weight** with `_recency_weight`.
-            7. **Final score** = semantic similarity × recency weight.
-            8. Collect all candidates into a list.
-            9. **Sort candidates** by final score (highest first).
-            10. Return only the top k_final results.
         """
 
         # 1. Convert query text → vector
         query_vector = self._query_embed(user_query)
 
         # 2. Search FAISS index: get distances + vector IDs
-        dists, ids = index_file.search(query_vector, k_initial_matches) # return the k_initial_matches nearest ones using your distance metric (L2 in this case)
+        dists, ids = index_file.search(query_vector, k_semantic_matches) # return the k_initial_matches nearest ones using your distance metric (L2 in this case)
         # dists - the distances to the k_initial_matches nearest neighbors
         # ids - the IDs of the k_initial_matches nearest neighbors
         dists, ids = dists[0], ids[0]  # FAISS returns nested arrays [[...]] ; take first row
 
-        now = datetime.now(timezone.utc)
         cands = []
 
         # 3. Iterate over search results
@@ -173,64 +171,241 @@ class RAGRetriever:
             metadata_i = meta_file[i]
 
             # 5. Convert distance to similarity (higher = more similar)
-            sim = self._l2_to_sim(dist)
+            semantic_score = self._l2_to_sim(dist)
 
-            # 6. Parse publication date
-            dt = self._parse_dt(metadata_i.get("published_at"))
-
-            # 7. If cutoff window is set, skip too-old items
-            if min_days_window is not None and dt is not None:
-                if (now - dt).days > min_days_window:
-                    continue
-
-            # 8. Compute recency weight (boost newer results)
-            if use_recency_weight:
-                rw = self._recency_weight(dt, half_life_days=half_life_days)
-            else:
-                rw = 1.0
-
-            # 9. Final score = semantic similarity * recency weight
-            final_score = sim * rw
-
-            # 10. Normalize metadata for consistent output
+            # 6. Normalize metadata for consistent output
             metadata_i = self.normalize_metadata(metadata_i)
-            metadata_i["final_score"] = final_score
-            print(f"Final score for vector ID {i}: {final_score:.4f}\n\n")
-            print(f"title for vector ID {i}: {metadata_i['title']}\n\n")
-            print(f"Metadata for vector ID {i}: {metadata_i['chunk']}")
-            print("#" * 80)
+            metadata_i["semantic_score"] = semantic_score
             
-            # 10. Add to candidate list
+            # 7. Add to candidate list
             cands.append(metadata_i)
-        
-        # 11. Sort candidates by final score (descending)
-        cands.sort(key=lambda x: x["final_score"], reverse=True)
 
-        # 12. Return top-k_final_matches results
-        return cands[:k_final_matches]
+        # 8. Sort candidates by semantic_score (descending)
+        cands.sort(key=lambda x: x["semantic_score"], reverse=True)
 
-    def retrieve(self, question, mode, k_initial_matches=80, k_final_matches=6):
-        if mode == "article":
-            return self._search_index(index_file = self.article_idx, 
-                                      meta_file = self.article_meta, 
-                                      user_query = question,
-                                      k_initial_matches=k_initial_matches,
-                                        k_final_matches=k_final_matches,
-                                      )
-        if mode == "chunk":
-            return self._search_index(index_file = self.chunk_idx, 
-                                      meta_file = self.chunk_meta, 
-                                      user_query = question,
-                                      k_initial_matches=k_initial_matches,
-                                      k_final_matches=k_final_matches,
-                                      )
-        if mode == "title":
-            return self._search_index(index_file = self.title_idx, 
-                                      meta_file = self.title_meta, 
-                                      user_query = question,
-                                      k_initial_matches=k_initial_matches,
-                                      k_final_matches=k_final_matches,
-                                      )
+        return cands
+
+    def _keyword_search(self, user_query, fields=["title", "author", "content"], k_keyword_matches=20):
+        """
+        Perform a keyword search in MongoDB using Atlas Search.
+
+        Returns a normalized list of results with uniform fields.
+        """
+        if not user_query.strip():
+            print("Skipping keyword search because query is empty.")
+            return []
+    
+        pipeline = [
+            {
+                "$search": {
+                    "index": "article_search",
+                    "text": {
+                        "query": user_query,
+                        "path": fields,
+                        "fuzzy": {"maxEdits": 1}
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "title": 1,
+                    "author": 1,
+                    "content": 1,
+                    "url": 1,
+                    "published_at": 1,
+                    "bm25_score": {"$meta": "searchScore"}
+                }
+            },
+            {"$limit": int(k_keyword_matches)},
+            {"$sort": {"bm25_score": -1}}
+        ]
+
+        raw_results = list(self._mongo.aggregate(pipeline))
+
+        # Normalize for consistency with semantic results
+        normalized_results = []
+        for doc in raw_results:
+            norm = self.normalize_metadata(doc)
+            norm["bm25_score"] = doc.get("bm25_score", 0.0)
+            normalized_results.append(norm)
+
+        return normalized_results
+
+
+    def _merge_and_score_searches(self, semantic_results, keyword_results, alpha=0.7, beta=0.3):
+        """
+        Merge semantic and keyword results.
+        - Keeps multiple results per article if chunks differ.
+        - Computes a weighted final score.
+
+        Args:
+            semantic_results (list): Each item may be an article or a chunk.
+            keyword_results (list): Full-article matches from keyword search.
+            alpha (float): Semantic score weight.
+            beta (float): Keyword score weight.
+
+        Returns:
+            list: Scored, sorted list of documents/chunks.
+        """
+        index = {}  # key = (url, chunk_id or None)
+
+        def make_key(doc):
+            return (doc.get("url"), doc.get("chunk_id"))  # allows multiple chunks per article
+
+        # Add semantic results
+        for doc in semantic_results:
+            key = make_key(doc)
+            index[key] = dict(doc)  # full copy
+            index[key]["semantic_score"] = doc.get("semantic_score", 0.0)
+
+        # Add keyword results
+        for doc in keyword_results:
+            key = make_key(doc)
+            if key in index:
+                index[key].update(doc)
+            else:
+                index[key] = dict(doc)
+            index[key]["bm25_score"] = doc.get("bm25_score", 0.0)
+
+        # Compute final weighted score
+        scored = []
+        for doc in index.values():
+            s = doc.get("semantic_score", 0.0)
+            b = doc.get("bm25_score", 0.0)
+            doc["final_score"] = alpha * s + beta * b
+            scored.append(doc)
+
+        # Sort by final_score
+        scored.sort(key=lambda d: d["final_score"], reverse=True)
+        return scored
+
+
+    def _hybrid_search(self, query, 
+                       index_file, 
+                       meta_file, 
+                       keyword_fields=["title", "author", "content"],
+                       alpha=0.7, 
+                       beta=0.3,
+                       k_semantic_matches=30, 
+                       k_keyword_matches=30, 
+                       k_final=6):
+        """
+        This function performs a hybrid search, combining semantic and keyword search.
+        Args:
+            query (str): The query string to search for.
+            index_file (faiss.Index): The FAISS index to search.
+            meta_file (list): The metadata list where meta[i] corresponds to index vector i.
+            keyword_fields (list): The fields to search in for keyword search.
+            alpha (float): The weight of the semantic score in the final score.
+            beta (float): The weight of the keyword score in the final score.
+            k_semantic (int): The number of semantic search results to return.
+            k_keyword (int): The number of keyword search results to return.
+            k_final (int): The maximum number of final search results to return.
+        Returns:
+            list: A list of documents matching the search query.
+        """
+        if alpha > 0:
+            semantic_results = self._semantic_search(index_file=index_file,
+                                                meta_file=meta_file,
+                                                user_query=query,
+                                                k_semantic_matches=k_semantic_matches)
+        else:
+            semantic_results = []
+
+        if beta > 0:
+            keyword_results = self._keyword_search(user_query=query,fields=keyword_fields, k_keyword_matches=k_keyword_matches)
+
+        else:
+            keyword_results = []
+
+        merged = self._merge_and_score_searches(semantic_results=semantic_results, 
+                                       keyword_results=keyword_results, 
+                                       alpha=alpha, 
+                                       beta=beta)
+
+        return merged[:k_final]
+
+
+
+    def retrieve(self, 
+                 query, 
+                 semantic_file="full_content", 
+                 keywords_fields=["title", "author", "content"], 
+                 alpha=0.7, 
+                 beta=0.3,
+                 k_semantic_matches=20, 
+                 k_keyword_matches=20,
+                 k_final_matches=6,):
+        """
+        Perform a hybrid search based on the selected mode: 'article', 'chunk', or 'title'.
+
+        Args:
+            query (str): User query.
+            semantic_file (str): The type of semantic index to use ('full_content', 'article', 'chunk', 'title').
+            keywords_fields (list): Fields to use for keyword search (Can be 'title', 'author', 'content').
+            alpha (float): Weight for semantic score in final ranking.
+            beta (float): Weight for keyword score in final ranking.
+            mode (str): Search mode - 'article', 'chunk', or 'title'.
+            k_semantic_matches (int): Number of initial matches to retrieve from semantic search.
+            k_keyword_matches (int): Number of initial matches to retrieve from keyword search.
+            k_final_matches (int): Number of final matches to return after merging and scoring.
+
+        Returns:
+            list: Top-k results sorted by combined relevance score.
+
+        """
+        if semantic_file == "full_content":
+            return self._hybrid_search(
+                query=query,
+                index_file=self.full_content_idx,
+                meta_file=self.full_content_meta,
+                keyword_fields=keywords_fields,
+                alpha=alpha,
+                beta=beta,
+                k_semantic_matches=k_semantic_matches,
+                k_keyword_matches=k_keyword_matches,
+                k_final=k_final_matches
+            )
+        if semantic_file == "article":
+            return self._hybrid_search(
+                query=query,
+                index_file=self.article_idx,
+                meta_file=self.article_meta,
+                keyword_fields=keywords_fields,
+                alpha=alpha,
+                beta=beta,
+                k_semantic_matches=k_semantic_matches,
+                k_keyword_matches=k_keyword_matches,
+                k_final=k_final_matches
+            )
+
+        if semantic_file == "chunk":
+            return self._hybrid_search(
+                query=query,
+                index_file=self.chunk_idx,
+                meta_file=self.chunk_meta,
+                keyword_fields=keywords_fields,
+                alpha=1,
+                beta=0,
+                k_semantic_matches=k_semantic_matches,
+                k_keyword_matches=k_keyword_matches,
+                k_final=k_final_matches
+            )
+
+        if semantic_file == "title":
+            return self._hybrid_search(
+                query=query,
+                index_file=self.title_idx,
+                meta_file=self.title_meta,
+                keyword_fields=keywords_fields,
+                alpha=alpha,
+                beta=beta,
+                k_semantic_matches=k_semantic_matches,
+                k_keyword_matches=k_keyword_matches,
+                k_final=k_final_matches
+            )
+
+        raise ValueError(f"Unknown retrieval mode: {semantic_file}")
 
 
   
