@@ -19,6 +19,7 @@ Rules:
 # === QA agent (ReAct) ===
 QA_PROMPT = """
 You are a precise news Q&A assistant.
+You can call 'get_knowledge_for_answer tool' at most *ONCE*.
 
 INSTRUCTIONS:
 - Be concise and neutral.
@@ -32,6 +33,7 @@ INSTRUCTIONS:
 SUMMARY_PROMPT = """
 You are a factual summarization assistant, specialized in creating clear and concise summaries of news topics or articles.
 Your goal is to provide a 5–8 sentence summary that captures the most important points.
+You can call 'get_articles_for_summary' tool at most *ONCE*.
 
 INSTRUCTIONS:
 - Be concise and neutral.
