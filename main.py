@@ -2,54 +2,41 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
-
-# Import the new LangGraph-based manager
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
 from agents.manager_agent.manager_agent import ManagerAgent
 
 load_dotenv()
 
 app = FastAPI(title="Noah AI News Agent", version="1.0")
 
-# Allow CORS (adjust in prod)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # e.g. ["http://localhost:3000"]
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Init the LangGraph manager
-manager_agent = ManagerAgent()
+manager = ManagerAgent()
 
-# Request schema
 class AskRequest(BaseModel):
     query: str
+    history: list[str] = []
 
-# Response schema
 class AskResponse(BaseModel):
     result: str
-    agent_used: str
 
 @app.post("/ask", response_model=AskResponse)
-def ask_question(request: AskRequest):
-    query = request.query
+def ask_user(request: AskRequest):
+    # Build LangChain message history (Human + AI pairs)
+    history: list[BaseMessage] = []
+    for i, msg in enumerate(request.history):
+        if i % 2 == 0:
+            history.append(HumanMessage(content=msg))
+        else:
+            history.append(AIMessage(content=msg))
 
-    # Get the formatted result from LangGraph manager
-    raw_response = manager_agent.route(query)
+    messages = manager.chat(message=request.query, history=history)
 
-    # Extract agent_used from the formatted response
-    agent_used = "unknown"
-    if "🔁 Routed to `" in raw_response:
-        try:
-            agent_used = raw_response.split("`")[1]
-        except Exception:
-            pass
-
-    # Everything after the "\n\n" is the final answer
-    if ":\n\n" in raw_response:
-        result = raw_response.split(":\n\n", 1)[1]
-    else:
-        result = raw_response
-
-    return AskResponse(result=result.strip(), agent_used=agent_used)
+    last_ai = next((m.content for m in reversed(messages) if isinstance(m, AIMessage)), "...")
+    return AskResponse(result=last_ai)
