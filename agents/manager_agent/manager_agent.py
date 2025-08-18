@@ -89,4 +89,6 @@ class ManagerAgent:
         history = history or []
         full_state = {"messages": history + [HumanMessage(content=message)]}
         updated = self.app.invoke(full_state)
+        for m in updated["messages"]:
+            m.pretty_print()
         return updated["messages"]
