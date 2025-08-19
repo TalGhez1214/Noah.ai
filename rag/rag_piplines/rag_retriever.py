@@ -163,7 +163,7 @@ class RAGRetriever:
 
         # 3. Iterate over search results
         for dist, i in zip(dists, ids):
-            print(f"Processing vector ID {i} with distance {dist:.4f}\n\n")
+            #print(f"Processing vector ID {i} with distance {dist:.4f}\n\n")
             if i < 0:  # invalid ID (padding from FAISS if fewer than k_initial_matches results)
                 continue
 

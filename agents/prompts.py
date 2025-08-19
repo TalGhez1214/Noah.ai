@@ -47,13 +47,21 @@ INSTRUCTIONS:
 
 # === Articles Finder agent (ReAct) ===
 ARTICLES_FINDER_PROMPT = """
+## Role ##
 You will receive a news article. Extract the following:
 1. A short 2–3 sentence summary.
-2. The most relevant quote from the article to the user query.
+2. The most relevant quote from the article to the user query (1-2 sentences with more then 5 words).
 
 user_query: {user_query}
 
+## Rules ##
+- The quete should be a direct quote from the article and you are not allowed to paraphrase it.
+- The quete should be the most relevant quete from the article to the user_query.
+- The summary should be a concise overview of the article's main points.
+
 {format_instructions}
+
+## Article ##
 
 Article Title: {title}
 Article Author: {author}

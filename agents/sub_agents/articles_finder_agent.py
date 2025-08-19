@@ -14,8 +14,9 @@ class ArticalFinderAgent():
     """
 
     def __init__(self, retriever, model: str = "gpt-4o-mini"):
+        
         self.retriever = retriever
-        self._llm = ChatOpenAI(model=self.model, temperature=0.8)
+        self._llm = ChatOpenAI(model=model, temperature=0.8)
 
         # Define the response schemas for the output parser
         self._response_schemas = [
@@ -24,6 +25,14 @@ class ArticalFinderAgent():
         ]
 
         self._output_parser = StructuredOutputParser.from_response_schemas(self._response_schemas)
+
+        format_instructions = self._output_parser.get_format_instructions()
+        # Define the prompt template for the agent
+        self._prompt = PromptTemplate(
+                input_variables=["user_query", "title", "author", "content"],
+                partial_variables={"format_instructions": format_instructions},
+                template=ARTICLES_FINDER_PROMPT,
+            )
         
     def get_knowledge_for_answer(self, user_query: str) -> str:
         """
@@ -39,29 +48,21 @@ class ArticalFinderAgent():
         """
         try:
             hits = self.retriever.retrieve(
-                question=user_query,
+                query=user_query,
                 semantic_file="full_content",  
                 keywords_fields=["title", "author", "content"], 
                 k_final_matches=3
             )
-        except Exception:
-            return "There is no relevant articles for this query."
+        except Exception as e:
+            return f"Error retrieving knowledge: {e}"
 
         return hits
 
-    def build_articles_finder_agent(self, user_query: str, article: dict = {}):
-
-        format_instructions = self._output_parser.get_format_instructions()
-
-        prompt = PromptTemplate(
-                input_variables=["user_query", "title", "author", "content"],
-                partial_variables={"format_instructions": format_instructions},
-                template=ARTICLES_FINDER_PROMPT,
-            )
-
+    def build_articles_finder_agent(self, user_query: str="", article: dict = {}):
         return create_react_agent(
             model=self._llm,
-            prompt=prompt.format(user_query=user_query, **article),
+            tools=[],
+            prompt=self._prompt.format(user_query=user_query, **article),
             name="articles_finder",
         )
     
@@ -81,7 +82,9 @@ class ArticalFinderAgent():
                 # Optional: retry with a fix
                 format_instructions = self._output_parser.get_format_instructions()
                 fixed_prompt = f"""Your previous output was invalid: \n{llm_output} \n\n {format_instructions}\n
-                Fix this into valid JSON only, nothing else"""
+                Fix this into valid JSON only, nothing else.
+                
+                If you dont know the answer to one of the fields, just return "Invalid output" for that field."""
                 llm_output = self._llm.invoke(fixed_prompt).content.strip()
                 
         # Only raise after all retries failed

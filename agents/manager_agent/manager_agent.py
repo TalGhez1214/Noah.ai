@@ -31,7 +31,7 @@ class ManagerAgent:
         self.retriever = RAGRetriever()
         self.qa_app = build_qa_agent(self.retriever, model)
         self.summary_app = build_summary_agent(self.retriever, model)
-        self.articles_finder_agent = ArticalFinderAgent(retriever=self.retriever, model=model).build_articles_finder_agent()
+        self.articles_finder_agent = ArticalFinderAgent(retriever=self.retriever, model=model)
         self.router_llm = ChatOpenAI(model=model, temperature=0)
 
         # LangGraph build
@@ -67,13 +67,13 @@ class ManagerAgent:
             "Key Quote": "Key Quote from the article",
         }
         """
-        articles = self.articles_finder_agent.get_knmowledge_for_answer(user_query=self.user_query)
+        articles = self.articles_finder_agent.get_knowledge_for_answer(user_query=self.user_query)
         articles_snippets = []
 
         for article in articles:
             agent_answer = self.articles_finder_agent.build_articles_finder_agent(user_query=self.user_query, article=article).invoke({"messages": state["messages"]})
             try:
-                json_output = self.articles_finder_agent.structured_output(agent_answer)
+                json_output = self.articles_finder_agent.structured_output(agent_answer["messages"][-1].content)
             except Exception as e:
                 print(f"Error parsing structured output: {e}")
                 json_output = {"Summary": "No summary available", "Key Quote": "No quote available"}
