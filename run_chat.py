@@ -5,7 +5,7 @@ from langchain_core.messages import AIMessage
 
 def main():
     
-    user_id = "123" # TODO: Replace with actual user ID if needed using MongoDB request
+    user_id = "124" # TODO: Replace with actual user ID if needed using MongoDB request
     agent = ManagerAgent(user_id=user_id)
 
     print("🤖 Hello! Ask me a news-related question or request a summary.")

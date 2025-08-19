@@ -50,6 +50,7 @@ class ManagerAgent:
         self.app = graph.compile(checkpointer=memory)
 
     def _qa_node(self, state: AgentState) -> AgentState:
+
         out = self.qa_app.invoke({"messages": state["messages"]})
         return {"messages": out["messages"], "agent": "qa"}
 
@@ -77,14 +78,14 @@ class ManagerAgent:
             except Exception as e:
                 print(f"Error parsing structured output: {e}")
                 json_output = {"Summary": "No summary available", "Key Quote": "No quote available"}
-            articles_snippets.update(json_output)
+            articles_snippets.append(json_output)
 
         for i in range(len(articles_snippets)):
             articles_snippets[i]["title"] = articles[i]["title"]
             articles_snippets[i]["url"] = articles[i]["url"] # Make sure it's clickable in the UI
 
         return {
-            "messages": [AIMessage(content=articles_snippets)], 
+            "messages": [AIMessage(content=f"{articles_snippets}")], 
             "agent": "articles_finder"
         }
     
@@ -133,8 +134,8 @@ class ManagerAgent:
         thread = {"configurable": {"thread_id": self.user_id}} # Use user_id as thread_id to pull conversation history from RAM
         new_message = [HumanMessage(content=self.user_query)]
 
-        updated = self.app.invoke({"messages": new_message}, thread) # calling manager agent to start working
-
+        # calling manager agent to start working
+        updated = self.app.invoke({"messages": new_message}, thread) # Here we added the user query as a new message to the Graph state
         for m in updated["messages"]:
             m.pretty_print()
         return updated["messages"]
