@@ -404,6 +404,10 @@ class RAGRetriever:
                 k_keyword_matches=k_keyword_matches,
                 k_final=k_final_matches
             )
+        
+        if semantic_file == "none" and keywords_fields == []:
+            # If no data is needed for the query, return empty string
+            return ""
 
         raise ValueError(f"Unknown retrieval mode: {semantic_file}")
 

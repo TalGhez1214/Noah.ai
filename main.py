@@ -17,7 +17,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-manager = ManagerAgent()
+
 
 class AskRequest(BaseModel):
     query: str
@@ -27,7 +27,10 @@ class AskResponse(BaseModel):
 
 @app.post("/ask", response_model=AskResponse)
 def ask_user(request: AskRequest):
-    messages = manager.chat(message=request.query, history=[])
+    
+    user_id = "123" # TODO: Replace with actual user ID if needed using MongoDB request
+    manager = ManagerAgent(user_query=request.query, user_id=user_id)
+    messages = manager.chat()
 
     last_ai = next((m.content for m in reversed(messages) if isinstance(m, AIMessage)), "...")
     return AskResponse(result=last_ai)
