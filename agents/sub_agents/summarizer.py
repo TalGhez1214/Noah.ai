@@ -16,6 +16,17 @@ class SummarizerSubAgent(BaseSubAgent):
 
         @tool("get_knowledge_for_answer", description = "Get knowledge for answer")
         def _get_articles_for_summary(topic: str) -> str:
+            """
+            Retrieve the articles for summarizing the user query
+            from the news database.
+
+            Input:
+                topic (str): The topic or article subject provided by the user.
+
+            Output:
+                A plain text string containing ONLY the concatenated 'content' fields
+                from the top retrieved articles.
+            """
             try:
                 hits = self.retriever.retrieve(
                     question=topic,

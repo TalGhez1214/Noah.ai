@@ -16,6 +16,17 @@ class QASubAgent(BaseSubAgent):
 
         @tool("get_knowledge_for_answer", description = "Get knowledge for answer")
         def _get_knowledge_for_answer(query: str) -> str:
+            """
+            Retrieve the most relevant pieces of knowledge (short text chunks)
+            from the news database for answering a specific user question.
+            
+            Input:
+                query (str): The exact question the user asked.
+
+            Output:
+                A plain text string containing ONLY the concatenated 'chunk' fields
+                from the top retrieved snippets
+            """
             try:
                 hits = self.retriever.retrieve(
                     question=query,
