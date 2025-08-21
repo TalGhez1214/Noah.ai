@@ -1,3 +1,66 @@
+# agents/prompts.py
+from langchain_core.messages import SystemMessage
+from langchain_core.runnables import RunnableConfig
+from langchain_core.messages import AIMessage
+from langgraph.prebuilt.chat_agent_executor import AgentState
+
+# === Articles Finder agent (ReAct) ===
+def article_finder_prompt(state: AgentState, config: RunnableConfig):
+    # Extract inputs
+    data = config["configurable"]
+
+    user_query = data["user_query"]
+    title = data["title"]
+    author = data["author"]
+    content = data["content"]
+    format_instructions = data["format_instructions"]
+
+    # Build single system message with everything
+    system_prompt = f"""  ## Role ##
+                        You will receive a news article. Extract the following:
+                        1. A short 2–3 sentence summary.
+                        2. The most relevant quote from the article to the user query (1-2 sentences with more then 5 words).
+
+                        user_query: {user_query}
+
+                        ## Rules ##
+                        - The quete should be a direct quote from the article and you are not allowed to paraphrase it.
+                        - The quete should be the most relevant quete from the article to the user_query.
+                        - The summary should be a concise overview of the article's main points.
+
+                        {format_instructions}
+
+                        ## Article ##
+
+                        Article Title: {title}
+                        Article Author: {author}
+                        Article Content:
+                        \"\"\"
+                        {content}
+                        \"\"\"
+                    """
+    return [SystemMessage(content=system_prompt)]
+
+# === Fallback agent (ReAct) ===
+def fallback_agent_prompt(state: AgentState , config: RunnableConfig):
+    # Extract inputs
+    data = config["configurable"]
+
+    user_query = data["user_query"]
+
+    # Build single system message with everything
+    system_prompt = f"""
+                    "You are a helpful assistant specialized in news Q&A and summarization.\n"
+                    "A user asked something outside your capabilities. Kindly decline.\n\n"
+                    "Explain your limits:\n"
+                    "- Answering news-related questions\n"
+                    "- Summarizing articles or topics\n"
+                    "- Finding relevant articles\n"
+                    "Then give 1–2 example prompts they CAN ask.\n\n"
+                    "User said:\n{user_query}\n\n"
+                    "Respond kindly and clearly:"
+                    """
+    return [SystemMessage(content=system_prompt)]
 
 
 # ================================
