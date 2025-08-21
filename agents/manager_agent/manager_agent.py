@@ -46,7 +46,11 @@ class ManagerAgent:
         self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=article_finder_prompt)
         self.fallback_agent = FallbackSubAgent(model=model, prompt=fallback_agent_prompt)
 
-        self._agents = [self.qa_agent, self.article_summary_agent, self.articles_finder_agent, self.fallback_agent]
+        self._agents = [self.qa_agent, 
+                        self.article_summary_agent, 
+                        self.articles_finder_agent, 
+                        self.fallback_agent
+                        ]
 
         self._tools = self.create_tools(
             agents=self._agents
