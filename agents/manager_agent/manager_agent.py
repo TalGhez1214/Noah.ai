@@ -4,11 +4,11 @@ import re
 
 from langgraph.graph import StateGraph, START, END, MessagesState
 from langgraph.types import Command
-from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AIMessage
+from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
-from agents.prompts import SUPERVISOR_PROMPT, QA_PROMPT, SUMMARY_PROMPT, ARTICLES_FINDER_PROMPT
+from agents.prompts import SUPERVISOR_PROMPT, QA_PROMPT, SUMMARY_PROMPT, ARTICLES_FINDER_PROMPT, FALLBACK_PROMPT
 
 from agents.sub_agents.qa import QASubAgent
 from agents.sub_agents.summarizer import SummarizerSubAgent
@@ -43,7 +43,7 @@ class ManagerAgent:
         self.qa_agent = QASubAgent(retriever=self.retriever, model=model, prompt=QA_PROMPT)
         self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=model, prompt=SUMMARY_PROMPT)
         self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=ARTICLES_FINDER_PROMPT)
-        self.fallback_agent = FallbackSubAgent(model=model, prompt=)
+        self.fallback_agent = FallbackSubAgent(model=model, prompt=FALLBACK_PROMPT)
 
         self._tools = self.create_tools(
             agents=[
@@ -108,68 +108,6 @@ class ManagerAgent:
             )
         return handoff_tool
 
-
-    # StateGraph nodes for the ManagerAgent
-    def _qa_node(self, state: AgentState) -> AgentState:
-
-        out = self.qa_app.invoke({"messages": state["messages"]})
-        return {"messages": out["messages"], "agent": "qa"}
-
-    def _summary_node(self, state: AgentState) -> AgentState:
-        out = self.summary_app.invoke({"messages": state["messages"]})
-        return {"messages": out["messages"], "agent": "summary"}
-    
-    def _articles_finder_node(self, state: AgentState) -> AgentState:
-        """
-        This node handles the articles finder agent, which retrieves relevant articles
-        based on the user's query and returns them as a dictionary response for each article:
-        {
-            "title": "Article Title",
-            "Summary": "Article Summary",
-            "Key Quote": "Key Quote from the article",
-        }
-        """
-        articles = self.articles_finder_agent.get_knowledge_for_answer(user_query=self.user_query)
-        articles_snippets = []
-
-        for article in articles:
-            agent_answer = self.articles_finder_agent.build_articles_finder_agent(user_query=self.user_query, article=article).invoke({"messages": state["messages"]})
-            try:
-                json_output = self.articles_finder_agent.structured_output(agent_answer["messages"][-1].content)
-            except Exception as e:
-                print(f"Error parsing structured output: {e}")
-                json_output = {"Summary": "No summary available", "Key Quote": "No quote available"}
-            articles_snippets.append(json_output)
-
-        for i in range(len(articles_snippets)):
-            articles_snippets[i]["title"] = articles[i]["title"]
-            articles_snippets[i]["url"] = articles[i]["url"] # Make sure it's clickable in the UI
-
-        return {
-            "messages": [AIMessage(content=f"{articles_snippets}")], 
-            "agent": "articles_finder"
-        }
-    
-
-    def _reject_node(self, state: AgentState) -> AgentState:
-        """Politely decline unsupported tasks using an LLM-generated message."""
-        last_user_msg = next((m.content for m in reversed(state["messages"]) if m.type == "human"), "")
-        
-        rejection_prompt = (
-            "You are a helpful assistant specialized in news Q&A and summarization.\n"
-            "A user has just asked a question or made a request that is outside your capabilities.\n"
-            "You cannot help with this request, but you want to be kind and clear.\n\n"
-            "Explain that you are limited to:\n"
-            "- Answering news-related questions\n"
-            "- Summarizing articles or topics\n"
-            "Then give 1–2 example prompts the user *can* ask instead.\n\n"
-            "User said:\n"
-            f"{last_user_msg}\n\n"
-            "Respond kindly and clearly:"
-        )
-
-        reply = self.router_llm.invoke([SystemMessage(content=rejection_prompt)]).content.strip()
-        return {"messages": [AIMessage(content=reply)], "agent": "none"}
 
     # Chat entry point for full conversation
     def chat(self) -> list[BaseMessage]:

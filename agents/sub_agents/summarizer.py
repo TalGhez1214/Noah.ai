@@ -14,7 +14,7 @@ class SummarizerSubAgent(BaseSubAgent):
         self.top_k = top_k
         self.prompt = prompt
 
-        @tool("get_articles_for_summary")
+        @tool("get_knowledge_for_answer", description = "Get knowledge for answer")
         def _get_articles_for_summary(topic: str) -> str:
             try:
                 hits = self.retriever.retrieve(

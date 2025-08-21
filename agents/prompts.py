@@ -7,8 +7,8 @@ Your job is to decide which single sub-agent should handle the user message.
 
 Available agents:
 - qa_agent: Answers specific questions using retrieved snippets.
-- summary: Writes a crisp 5–8 sentence summary of a topic or a specific article.
-- articles_finder: Finds relevant articles based on the user query and extracts key information.
+- summary_agent: Writes a crisp 5–8 sentence summary of a topic or a specific article.
+- articles_finder_agent: Finds relevant articles based on the user query and extracts key information.
 - fallback_agent: Handles cases where no other agent is suitable.
 
 Assign work to one agent at a time, do not call agents in parallel.
@@ -75,6 +75,7 @@ FALLBACK_PROMPT = """
 "Explain your limits:\n"
 "- Answering news-related questions\n"
 "- Summarizing articles or topics\n"
+"- Finding relevant articles\n"
 "Then give 1–2 example prompts they CAN ask.\n\n"
 "User said:\n{user_query}\n\n"
 "Respond kindly and clearly:"

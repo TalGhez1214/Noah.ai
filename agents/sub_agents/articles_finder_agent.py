@@ -35,11 +35,11 @@ class ArticalFinderSubAgent(BaseSubAgent):
                 partial_variables={"format_instructions": format_instructions},
                 template=prompt,
             )
-        
+        self._llm = ChatOpenAI(model=model, temperature=0.0)
         self.agent = create_react_agent(
-            model=ChatOpenAI(model=model, temperature=0.8),
+            model=self._llm,
             tools=[],
-            prompt=prompt,
+            prompt=self.prompt,
             name="articles_finder",
         )
         
@@ -56,7 +56,7 @@ class ArticalFinderSubAgent(BaseSubAgent):
             from the top retrieved snippets
         """
         try:
-            hits = self.retriever(
+            hits = self.retriever.retrieve(
                 query=user_query,
                 semantic_file="full_content",  
                 keywords_fields=["title", "author", "content"], 
@@ -105,7 +105,10 @@ class ArticalFinderSubAgent(BaseSubAgent):
         articles_snippets = []
 
         for article in articles:
-            agent_answer = self.agent.invoke({"user_query": state["user_query"],**article})
+            agent_answer = self.agent.invoke({"user_query": state["user_query"],
+                                              "title": article["title"],
+                                              "author": article["author"],
+                                              "content": article["content"]})
             try:
                 json_output = self.structured_output(agent_answer["messages"][-1].content)
             except Exception as e:

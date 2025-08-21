@@ -14,7 +14,7 @@ class FallbackSubAgent(BaseSubAgent):
     """
 
     def __init__(self, model: str, prompt: str) -> None:
-        self.name = "reject_agent"
+        self.name = "fallback_agent"
         self.description = "Rejects unsupported tasks with a polite message."
         self._prompt = PromptTemplate(
             input_variables=["user_query"],
