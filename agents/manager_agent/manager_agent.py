@@ -8,10 +8,13 @@ from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AI
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
-from agents.prompts import SUPERVISOR_PROMPT
-from agents.sub_agents.qa import build_qa_agent
-from agents.sub_agents.summarizer import build_summary_agent
-from agents.sub_agents.articles_finder_agent import ArticalFinderAgent
+from agents.prompts import SUPERVISOR_PROMPT, QA_PROMPT, SUMMARY_PROMPT, ARTICLES_FINDER_PROMPT
+
+from agents.sub_agents.qa import QASubAgent
+from agents.sub_agents.summarizer import SummarizerSubAgent
+from agents.sub_agents.articles_finder_agent import ArticalFinderSubAgent
+from agents.sub_agents.fallback import FallbackSubAgent
+
 from rag.rag_piplines.rag_retriever import RAGRetriever
 from typing import Optional
 from typing import Annotated
@@ -26,6 +29,7 @@ from langgraph.prebuilt import create_react_agent
 memory = MemorySaver() 
 
 class AgentState(MessagesState):
+    user_query: Optional[str]
     agent: Optional[str] = None
 
 
@@ -33,18 +37,20 @@ class ManagerAgent:
     def __init__(self, model: str = "gpt-4o-mini", user_query: str = "", user_id: Optional[str] = None):
         self.user_query = user_query
         self.user_id = user_id
-
         self.retriever = RAGRetriever()
-        self.qa_agent = build_qa_agent(self.retriever, model)
-        self.article_summary_agent = build_summary_agent(self.retriever, model)
-        self.articles_finder_agent = ArticalFinderAgent(retriever=self.retriever, model=model)
 
+        # Available sub-agents
+        self.qa_agent = QASubAgent(retriever=self.retriever, model=model, prompt=QA_PROMPT)
+        self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=model, prompt=SUMMARY_PROMPT)
+        self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=ARTICLES_FINDER_PROMPT)
+        self.fallback_agent = FallbackSubAgent(model=model, prompt=)
 
         self._tools = self.create_tools(
             agents=[
                 self.qa_agent,
                 self.article_summary_agent,
                 self.articles_finder_agent,
+                self.fallback_agent
             ]
         )
 
@@ -58,15 +64,16 @@ class ManagerAgent:
         # LangGraph build
         graph = StateGraph(AgentState)
         graph.add_node(self._supervisor_agent)
-        graph.add_node(self.qa_agent.name, self._qa_node)
-        graph.add_node(self.article_summary_agent.name, self._summary_node)
-        graph.add_node(self.articles_finder_agent.name, self._articles_finder_node)
-        graph.add_node("reject", self._reject_node)
+        graph.add_node(self.qa_agent.name, self.qa_agent.call)
+        graph.add_node(self.article_summary_agent.name, self.article_summary_agent.call)
+        graph.add_node(self.articles_finder_agent.name, self.articles_finder_agent.call)
+        graph.add_node(self.fallback_agent.name, self.fallback_agent.call)
 
         graph.add_edge(START, "supervisor")
-        graph.add_edge("qa", END)
-        graph.add_edge("summary", END)
-        graph.add_edge("reject", END)
+        graph.add_edge(self.qa_agent.name, END)
+        graph.add_edge(self.article_summary_agent.name, END)
+        graph.add_edge(self.articles_finder_agent.name, END)
+        graph.add_edge(self.fallback_agent.name, END)
 
         self.app = graph.compile(checkpointer=memory)
 
@@ -171,8 +178,13 @@ class ManagerAgent:
         thread = {"configurable": {"thread_id": self.user_id}} # Use user_id as thread_id to pull conversation history from RAM
         new_message = [HumanMessage(content=self.user_query)]
 
+        graph_state = {
+            "messages": new_message,
+            "user_query": self.user_query,  # Store the user query in the state
+            "agent": None,  # Initially no agent is assigned
+        }
         # calling manager agent to start working
-        updated = self.app.invoke({"messages": new_message}, thread) # Here we added the user query as a new message to the Graph state
+        updated = self.app.invoke(graph_state, thread) # Here we added the user query as a new message to the Graph state
         
         # Print all messages in the updated state
         print("\n🗨️ Conversation History:")

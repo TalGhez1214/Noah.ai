@@ -6,7 +6,7 @@ from langgraph.prebuilt import create_react_agent
 from .base import BaseSubAgent
 
 
-class RejectSubAgent(BaseSubAgent):
+class FallbackSubAgent(BaseSubAgent):
     """Fallback agent that politely declines unsupported tasks.
 
     Always receives a raw prompt string and wraps it as a PromptTemplate

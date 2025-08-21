@@ -4,19 +4,21 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
 from agents.prompts import ARTICLES_FINDER_PROMPT
+from langchain_core.messages import AIMessage
+from .base import BaseSubAgent
+from typing import Any, Dict, Optional
 
-from pydantic import BaseModel
 
-
-class ArticalFinderAgent():
+class ArticalFinderSubAgent(BaseSubAgent):
     """
     Builds a ReAct agent for find relevant articles for a specific user query.
     """
 
-    def __init__(self, retriever, model: str = "gpt-4o-mini"):
-        
+    def __init__(self, retriever, model: str = "gpt-4o-mini", prompt: str = ARTICLES_FINDER_PROMPT) -> None:
+        self.name = "articles_finder_agent"
+        self.description = "This agent finds the most relevant articles for the user query"
         self.retriever = retriever
-        self._llm = ChatOpenAI(model=model, temperature=0.8)
+
 
         # Define the response schemas for the output parser
         self._response_schemas = [
@@ -28,11 +30,18 @@ class ArticalFinderAgent():
 
         format_instructions = self._output_parser.get_format_instructions()
         # Define the prompt template for the agent
-        self._prompt = PromptTemplate(
+        self.prompt = PromptTemplate(
                 input_variables=["user_query", "title", "author", "content"],
                 partial_variables={"format_instructions": format_instructions},
-                template=ARTICLES_FINDER_PROMPT,
+                template=prompt,
             )
+        
+        self.agent = create_react_agent(
+            model=ChatOpenAI(model=model, temperature=0.8),
+            tools=[],
+            prompt=prompt,
+            name="articles_finder",
+        )
         
     def get_knowledge_for_answer(self, user_query: str) -> str:
         """
@@ -47,7 +56,7 @@ class ArticalFinderAgent():
             from the top retrieved snippets
         """
         try:
-            hits = self.retriever.retrieve(
+            hits = self.retriever(
                 query=user_query,
                 semantic_file="full_content",  
                 keywords_fields=["title", "author", "content"], 
@@ -58,14 +67,6 @@ class ArticalFinderAgent():
 
         return hits
 
-    def build_articles_finder_agent(self, user_query: str="", article: dict = {}):
-        return create_react_agent(
-            model=self._llm,
-            tools=[],
-            prompt=self._prompt.format(user_query=user_query, **article),
-            name="articles_finder",
-        )
-    
     def structured_output(self, llm_output: str):
         """
         Convert the output string from the agent into a structured ArticleSummary object.
@@ -89,3 +90,34 @@ class ArticalFinderAgent():
                 
         # Only raise after all retries failed
         raise ValueError("Failed to parse output after multiple attempts.") 
+    
+    def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        This node handles the articles finder agent, which retrieves relevant articles
+        based on the user's query and returns them as a dictionary response for each article:
+        {
+            "title": "Article Title",
+            "Summary": "Article Summary",
+            "Key Quote": "Key Quote from the article",
+        }
+        """
+        articles = self.get_knowledge_for_answer(user_query=state["user_query"])
+        articles_snippets = []
+
+        for article in articles:
+            agent_answer = self.agent.invoke({"user_query": state["user_query"],**article})
+            try:
+                json_output = self.structured_output(agent_answer["messages"][-1].content)
+            except Exception as e:
+                print(f"Error parsing structured output: {e}")
+                json_output = {"Summary": "No summary available", "Key Quote": "No quote available"}
+            articles_snippets.append(json_output)
+
+        for i in range(len(articles_snippets)):
+            articles_snippets[i]["title"] = articles[i]["title"]
+            articles_snippets[i]["url"] = articles[i]["url"] # Make sure it's clickable in the UI
+
+        return {
+            "messages": [AIMessage(content=f"{articles_snippets}")], 
+            "agent": "articles_finder"
+        }
