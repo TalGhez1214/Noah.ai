@@ -29,9 +29,9 @@ class SummarizerSubAgent(BaseSubAgent):
             """
             try:
                 hits = self.retriever.retrieve(
-                    question=topic,
-                    mode="article",
-                    k_initial_matches=50,
+                    query=topic,
+                    semantic_file="article",
+                    k_semantic_matches=50,
                     k_final_matches=self.top_k,
                 )
             except Exception:

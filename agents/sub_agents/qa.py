@@ -14,45 +14,33 @@ class QASubAgent(BaseSubAgent):
         self.top_k = top_k
         self.prompt = prompt
 
-        @tool("get_knowledge_for_answer", description = "Get knowledge for answer")
-        def _get_knowledge_for_answer(query: str) -> str:
-            """
-            Retrieve the most relevant pieces of knowledge (short text chunks)
-            from the news database for answering a specific user question.
-            
-            Input:
-                query (str): The exact question the user asked.
-
-            Output:
-                A plain text string containing ONLY the concatenated 'chunk' fields
-                from the top retrieved snippets
-            """
+        @tool("get_knowledge_for_answer", description="Get knowledge for answer")
+        def get_knowledge_tool(query: str) -> str:
             try:
                 hits = self.retriever.retrieve(
-                    question=query,
-                    mode="chunk",
-                    k_initial_matches=80,
+                    query=query,
+                    semantic_file="chunk",
+                    k_semantic_matches=20,
                     k_final_matches=self.top_k,
                 )
             except Exception:
                 return ""
-            chunks = []
-            for h in hits:
-                ch = (h.get("chunk") or "").strip()
-                if ch:
-                    chunks.append(ch)
-            return "\n\n---\n\n".join(chunks)
+            chunks = [(h.get("chunk") or "").strip() for h in hits]
+            return "\n\n---\n\n".join([ch for ch in chunks if ch])
+        
+        # Save the raw callable for testing
+        self._knowledge_tool = get_knowledge_tool
 
         llm = ChatOpenAI(model=model, temperature=0)
         self.agent = create_react_agent(
             model=llm,
-            tools=[_get_knowledge_for_answer],
+            tools=[get_knowledge_tool],
             prompt=self.prompt,
             name="qa",
         )
 
-    def get_knowledge_for_answer(self, query: str) -> str:
-        return self.agent.tools[0].run(query) 
+    def get_knowledge_for_answer(self, query: str) -> str:        
+        return self._knowledge_tool.run(query) 
 
     def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
         out = self.agent.invoke({"messages": state["messages"]})
