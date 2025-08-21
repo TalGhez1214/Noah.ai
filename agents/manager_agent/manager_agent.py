@@ -8,17 +8,22 @@ from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage, AI
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
-# This allow us to save memory between different API calls and sessions - 
-# This is in-memory only - It does not persist between server restarts, Good for dev/testing, not production
-memory = MemorySaver() 
-
 from agents.prompts import SUPERVISOR_PROMPT
 from agents.sub_agents.qa import build_qa_agent
 from agents.sub_agents.summarizer import build_summary_agent
 from agents.sub_agents.articles_finder_agent import ArticalFinderAgent
 from rag.rag_piplines.rag_retriever import RAGRetriever
 from typing import Optional
+from typing import Annotated
+from langchain_core.tools import tool, InjectedToolCallId
+from langgraph.prebuilt import InjectedState
+from langgraph.graph import StateGraph, START, MessagesState
+from langgraph.types import Command
+from langgraph.prebuilt import create_react_agent
 
+# This allow us to save memory between different API calls and sessions - 
+# This is in-memory only - It does not persist between server restarts, Good for dev/testing, not production
+memory = MemorySaver() 
 
 class AgentState(MessagesState):
     agent: Optional[str] = None
@@ -28,18 +33,34 @@ class ManagerAgent:
     def __init__(self, model: str = "gpt-4o-mini", user_query: str = "", user_id: Optional[str] = None):
         self.user_query = user_query
         self.user_id = user_id
+
         self.retriever = RAGRetriever()
-        self.qa_app = build_qa_agent(self.retriever, model)
-        self.summary_app = build_summary_agent(self.retriever, model)
+        self.qa_agent = build_qa_agent(self.retriever, model)
+        self.article_summary_agent = build_summary_agent(self.retriever, model)
         self.articles_finder_agent = ArticalFinderAgent(retriever=self.retriever, model=model)
-        self.router_llm = ChatOpenAI(model=model, temperature=0)
+
+
+        self._tools = self.create_tools(
+            agents=[
+                self.qa_agent,
+                self.article_summary_agent,
+                self.articles_finder_agent,
+            ]
+        )
+
+        self._supervisor_agent = create_react_agent(
+                            model="openai:gpt-4.1",
+                            tools=self._tools,
+                            prompt=SUPERVISOR_PROMPT,
+                            name="supervisor",
+                        )
 
         # LangGraph build
         graph = StateGraph(AgentState)
-        graph.add_node("qa", self._qa_node)
-        graph.add_node("summary", self._summary_node)
-        graph.add_node("articles_finder", self._articles_finder_node)
-        graph.add_node("supervisor", self._supervisor)
+        graph.add_node(self._supervisor_agent)
+        graph.add_node(self.qa_agent.name, self._qa_node)
+        graph.add_node(self.article_summary_agent.name, self._summary_node)
+        graph.add_node(self.articles_finder_agent.name, self._articles_finder_node)
         graph.add_node("reject", self._reject_node)
 
         graph.add_edge(START, "supervisor")
@@ -49,6 +70,39 @@ class ManagerAgent:
 
         self.app = graph.compile(checkpointer=memory)
 
+
+    def create_tools(self, agents):
+        """Create tools for the supervisor agent."""
+        tools = []
+        for agent in agents:
+            tool = self.create_handoff_tool(agent_name=agent.name, description=agent.description)
+            tools.append(tool)
+        return tools
+
+    def create_handoff_tool(self, agent_name: str, description: str | None = None):
+        name = f"transfer_to_{agent_name}"
+        description = description or f"Ask {agent_name} for help."
+
+        @tool(name, description=description)
+        def handoff_tool(
+            state: Annotated[MessagesState, InjectedState],
+            tool_call_id: Annotated[str, InjectedToolCallId],
+        ) -> Command:
+            tool_message = {
+                "role": "tool",
+                "content": f"Successfully transferred to {agent_name}",
+                "name": name,
+                "tool_call_id": tool_call_id,
+            }
+            return Command(
+                goto=agent_name,  
+                update={**state, "messages": state["messages"] + [tool_message]},  
+                graph=Command.PARENT,  
+            )
+        return handoff_tool
+
+
+    # StateGraph nodes for the ManagerAgent
     def _qa_node(self, state: AgentState) -> AgentState:
 
         out = self.qa_app.invoke({"messages": state["messages"]})
@@ -110,32 +164,22 @@ class ManagerAgent:
         reply = self.router_llm.invoke([SystemMessage(content=rejection_prompt)]).content.strip()
         return {"messages": [AIMessage(content=reply)], "agent": "none"}
 
-    def _supervisor(self, state: AgentState) -> Command:
-        last_user = next((m.content for m in reversed(state["messages"]) if m.type == "human"), "")
-        msgs = [SystemMessage(content=SUPERVISOR_PROMPT), HumanMessage(content=last_user)]
-        choice = self.router_llm.invoke(msgs).content.strip().lower()
-
-        if "summary" in choice:
-            return Command(goto="summary")
-        elif "qa" in choice:
-            return Command(goto="qa")
-        elif "articles_finder" in choice:
-            return Command(goto="articles_finder")
-        elif "finish" in choice:
-            return Command(goto="reject")
-        else:
-            # Fallback: use question mark as a hint
-            if re.search(r"\?$", last_user.strip()):
-                return Command(goto="qa")
-            return Command(goto="reject")
-
+    # Chat entry point for full conversation
     def chat(self) -> list[BaseMessage]:
         """Chat entry point for full conversation."""
+        
         thread = {"configurable": {"thread_id": self.user_id}} # Use user_id as thread_id to pull conversation history from RAM
         new_message = [HumanMessage(content=self.user_query)]
 
         # calling manager agent to start working
         updated = self.app.invoke({"messages": new_message}, thread) # Here we added the user query as a new message to the Graph state
+        
+        # Print all messages in the updated state
+        print("\n🗨️ Conversation History:")
         for m in updated["messages"]:
             m.pretty_print()
         return updated["messages"]
+    
+    
+
+    
