@@ -127,9 +127,14 @@ class ManagerAgent:
         updated = self.app.invoke(graph_state, thread) # Here we added the user query as a new message to the Graph state
         
         # Print all messages in the updated state
-        print("\n🗨️ Conversation History:")
+        
+        # print("\n🗨️ Conversation History:")
+        # for m in updated["messages"]:
+        #     m.pretty_print()
+        print("\n🗨️ Conversation (no tool messages):")
         for m in updated["messages"]:
-            m.pretty_print()
+            if getattr(m, "type", "") not in {"tool"}:  # keep human/ai/system only
+                m.pretty_print()
         return updated["messages"]
     
     
