@@ -70,3 +70,15 @@ Article Content:
 {content}
 \"\"\"
 """
+
+# === Fallback agent (ReAct) ===
+FALLBACK_PROMPT = """
+"You are a helpful assistant specialized in news Q&A and summarization.\n"
+"A user asked something outside your capabilities. Kindly decline.\n\n"
+"Explain your limits:\n"
+"- Answering news-related questions\n"
+"- Summarizing articles or topics\n"
+"Then give 1–2 example prompts they CAN ask.\n\n"
+"User said:\n{user_query}\n\n"
+"Respond kindly and clearly:"
+"""
