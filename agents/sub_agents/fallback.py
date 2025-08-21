@@ -16,26 +16,27 @@ class FallbackSubAgent(BaseSubAgent):
     def __init__(self, model: str, prompt: str) -> None:
         self.name = "fallback_agent"
         self.description = "Rejects unsupported tasks with a polite message."
-        self._prompt = PromptTemplate(
-            input_variables=["user_query"],
-            template=prompt,
-        )
+        self._prompt = prompt
 
         llm = ChatOpenAI(model=model, temperature=0)
         self.agent = create_react_agent(
             model=llm,
             tools=[],
             prompt=self._prompt,
-            name="reject",
+            name="fallback_agent",
         )
 
     def get_knowledge_for_answer(self, query: str) -> str:
         return ""
 
     def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        last_user_msg = next((m.content for m in reversed(state["messages"]) if m.type == "human"), "")
-        out = self.agent.invoke({
-            "messages": state["messages"],
-            "user_query": last_user_msg,
-        })
+                                        
+        out = self.agent.invoke(
+                                {"messages": state["messages"]},  # still required even if unused
+                                config={
+                                    "configurable": {
+                                        "user_query": state["user_query"],
+                                    }
+                                }
+                            )
         return {"messages": out["messages"], "agent": self.name}

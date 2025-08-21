@@ -14,7 +14,7 @@ class ArticalFinderSubAgent(BaseSubAgent):
     Builds a ReAct agent for find relevant articles for a specific user query.
     """
 
-    def __init__(self, retriever, model: str = "gpt-4o-mini", prompt: str = article_finder_prompt) -> None:
+    def __init__(self, retriever, model: str = "gpt-4o-mini", prompt = article_finder_prompt) -> None:
         self.name = "articles_finder_agent"
         self.description = "This agent finds the most relevant articles for the user query"
         self.retriever = retriever

@@ -2,6 +2,7 @@
 from langchain_core.messages import SystemMessage
 from langchain_core.runnables import RunnableConfig
 from langchain_core.messages import AIMessage
+from langgraph.prebuilt.chat_agent_executor import AgentState
 
 # === Supervisor (router) ===
 SUPERVISOR_PROMPT = """
@@ -46,9 +47,10 @@ INSTRUCTIONS:
 """
 
 # === Articles Finder agent (ReAct) ===
-def article_finder_prompt(state, config: RunnableConfig):
+def article_finder_prompt(state: AgentState, config: RunnableConfig):
     # Extract inputs
     data = config["configurable"]
+
     user_query = data["user_query"]
     title = data["title"]
     author = data["author"]
@@ -82,14 +84,22 @@ def article_finder_prompt(state, config: RunnableConfig):
     return [SystemMessage(content=system_prompt)]
 
 # === Fallback agent (ReAct) ===
-FALLBACK_PROMPT = """
-"You are a helpful assistant specialized in news Q&A and summarization.\n"
-"A user asked something outside your capabilities. Kindly decline.\n\n"
-"Explain your limits:\n"
-"- Answering news-related questions\n"
-"- Summarizing articles or topics\n"
-"- Finding relevant articles\n"
-"Then give 1–2 example prompts they CAN ask.\n\n"
-"User said:\n{user_query}\n\n"
-"Respond kindly and clearly:"
-"""
+def fallback_agent_prompt(state: AgentState , config: RunnableConfig):
+    # Extract inputs
+    data = config["configurable"]
+
+    user_query = data["user_query"]
+
+    # Build single system message with everything
+    system_prompt = f"""
+                    "You are a helpful assistant specialized in news Q&A and summarization.\n"
+                    "A user asked something outside your capabilities. Kindly decline.\n\n"
+                    "Explain your limits:\n"
+                    "- Answering news-related questions\n"
+                    "- Summarizing articles or topics\n"
+                    "- Finding relevant articles\n"
+                    "Then give 1–2 example prompts they CAN ask.\n\n"
+                    "User said:\n{user_query}\n\n"
+                    "Respond kindly and clearly:"
+                    """
+    return [SystemMessage(content=system_prompt)]

@@ -8,7 +8,7 @@ from langchain_core.messages import HumanMessage, SystemMessage, BaseMessage
 from langchain_openai import ChatOpenAI
 from langgraph.checkpoint.memory import MemorySaver
 
-from agents.prompts import SUPERVISOR_PROMPT, QA_PROMPT, SUMMARY_PROMPT, article_finder_prompt, FALLBACK_PROMPT
+from agents.prompts import SUPERVISOR_PROMPT, QA_PROMPT, SUMMARY_PROMPT, article_finder_prompt, fallback_agent_prompt
 
 from agents.sub_agents.qa import QASubAgent
 from agents.sub_agents.summarizer import SummarizerSubAgent
@@ -39,11 +39,12 @@ class ManagerAgent:
         self.user_id = user_id
         self.retriever = RAGRetriever()
 
-        # Available sub-agents
+        
+        ## Available sub-agents ##
         self.qa_agent = QASubAgent(retriever=self.retriever, model=model, prompt=QA_PROMPT)
         self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=model, prompt=SUMMARY_PROMPT)
         self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=article_finder_prompt)
-        self.fallback_agent = FallbackSubAgent(model=model, prompt=FALLBACK_PROMPT)
+        self.fallback_agent = FallbackSubAgent(model=model, prompt=fallback_agent_prompt)
 
         self._tools = self.create_tools(
             agents=[
@@ -61,7 +62,7 @@ class ManagerAgent:
                             name="supervisor",
                         )
 
-        # LangGraph build
+        ## LangGraph build ##
         graph = StateGraph(AgentState)
         graph.add_node(self._supervisor_agent)
         graph.add_node(self.qa_agent.name, self.qa_agent.call)
