@@ -3,7 +3,7 @@ from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
-from agents.prompts import ARTICLES_FINDER_PROMPT
+from agents.prompts import article_finder_prompt
 from langchain_core.messages import AIMessage
 from .base import BaseSubAgent
 from typing import Any, Dict, Optional
@@ -14,7 +14,7 @@ class ArticalFinderSubAgent(BaseSubAgent):
     Builds a ReAct agent for find relevant articles for a specific user query.
     """
 
-    def __init__(self, retriever, model: str = "gpt-4o-mini", prompt: str = ARTICLES_FINDER_PROMPT) -> None:
+    def __init__(self, retriever, model: str = "gpt-4o-mini", prompt: str = article_finder_prompt) -> None:
         self.name = "articles_finder_agent"
         self.description = "This agent finds the most relevant articles for the user query"
         self.retriever = retriever
@@ -28,13 +28,14 @@ class ArticalFinderSubAgent(BaseSubAgent):
 
         self._output_parser = StructuredOutputParser.from_response_schemas(self._response_schemas)
 
-        format_instructions = self._output_parser.get_format_instructions()
-        # Define the prompt template for the agent
-        self.prompt = PromptTemplate(
-                input_variables=["user_query", "title", "author", "content"],
-                partial_variables={"format_instructions": format_instructions},
-                template=prompt,
-            )
+        # # Define the prompt template for the agent
+        # self.prompt = PromptTemplate(
+        #         input_variables=["user_query", "title", "author", "content"],
+        #         partial_variables={"format_instructions": format_instructions},
+        #         template=prompt,
+        #     )
+        self.prompt = prompt
+
         self._llm = ChatOpenAI(model=model, temperature=0.0)
         self.agent = create_react_agent(
             model=self._llm,
@@ -105,10 +106,18 @@ class ArticalFinderSubAgent(BaseSubAgent):
         articles_snippets = []
 
         for article in articles:
-            agent_answer = self.agent.invoke({"user_query": state["user_query"],
-                                              "title": article["title"],
-                                              "author": article["author"],
-                                              "content": article["content"]})
+            agent_answer = self.agent.invoke(
+                                        {"messages": []},  # still required even if unused
+                                        config={
+                                            "configurable": {
+                                                "user_query": state["user_query"],
+                                                "title": article["title"],
+                                                "author": article.get("author", "Unknown"),
+                                                "content": article.get("content", ""),
+                                                "format_instructions": self._output_parser.get_format_instructions(),
+                                            }
+                                        }
+                                    )
             try:
                 json_output = self.structured_output(agent_answer["messages"][-1].content)
             except Exception as e:
