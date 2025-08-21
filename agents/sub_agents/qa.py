@@ -12,6 +12,7 @@ class QASubAgent(BaseSubAgent):
         self.description = "Q&A agent that answers user questions using retrieved knowledge."
         self.retriever = retriever
         self.top_k = top_k
+        self.prompt = prompt
 
         @tool("get_knowledge_for_answer")
         def _get_knowledge_for_answer(query: str) -> str:
@@ -35,7 +36,7 @@ class QASubAgent(BaseSubAgent):
         self.agent = create_react_agent(
             model=llm,
             tools=[_get_knowledge_for_answer],
-            prompt=prompt,
+            prompt=self.prompt,
             name="qa",
         )
 

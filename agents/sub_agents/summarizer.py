@@ -1,48 +1,48 @@
-from typing import List
-from langgraph.prebuilt import create_react_agent
+from __future__ import annotations
+from typing import Any, Dict
 from langchain_openai import ChatOpenAI
 from langchain_core.tools import tool
-from agents.prompts import SUMMARY_PROMPT
+from langgraph.prebuilt import create_react_agent
+from .base import BaseSubAgent
 
-def build_summary_agent(retriever, model: str = "gpt-4o-mini", top_k: int = 5):
-    """
-    Builds a ReAct agent for summarization with a single retrieval tool.
-    """
 
-    @tool("get_articles_for_summary")
-    def get_articles_for_summary(topic: str) -> str:
-        """
-        Retrieve the articles for summarizing the user query
-        from the news database.
+class SummarizerSubAgent(BaseSubAgent):
+    def __init__(self, retriever, model: str, prompt: str, top_k: int = 5) -> None:
+        self.name = "summary_agent"
+        self.description = "Summarizes articles based on a given topic."
+        self.retriever = retriever
+        self.top_k = top_k
+        self.prompt = prompt
 
-        Input:
-            topic (str): The topic or article subject provided by the user.
+        @tool("get_articles_for_summary")
+        def _get_articles_for_summary(topic: str) -> str:
+            try:
+                hits = self.retriever.retrieve(
+                    question=topic,
+                    mode="article",
+                    k_initial_matches=50,
+                    k_final_matches=self.top_k,
+                )
+            except Exception:
+                return ""
+            contents = []
+            for h in hits:
+                c = (h.get("content") or "").strip()
+                if c:
+                    contents.append(c)
+            return "\n\n---\n\n".join(contents)
 
-        Output:
-            A plain text string containing ONLY the concatenated 'content' fields
-            from the top retrieved articles.
-        """
-        try:
-            hits = retriever.retrieve(
-                question=topic,
-                mode="article",  # article-level retrieval for summaries
-                k_initial_matches=50,
-                k_final_matches=top_k
-            )
-        except Exception:
-            return ""
+        llm = ChatOpenAI(model=model, temperature=0.3)
+        self.agent = create_react_agent(
+            model=llm,
+            tools=[_get_articles_for_summary],
+            prompt=self.prompt,
+            name="summary",
+        )
 
-        contents: List[str] = []
-        for h in hits:
-            c = h.get("content") or ""
-            if c:
-                contents.append(c.strip())
-        return "\n\n---\n\n".join(contents)
+    def get_knowledge_for_answer(self, query: str) -> str:
+        return self.agent.tools[0].run(query)
 
-    llm = ChatOpenAI(model=model, temperature=0.3)
-    return create_react_agent(
-        model=llm,
-        tools=[get_articles_for_summary],
-        prompt=SUMMARY_PROMPT,
-        name="summary",
-    )
+    def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        out = self.agent.invoke({"messages": state["messages"]})
+        return {"messages": out["messages"], "agent": self.name}

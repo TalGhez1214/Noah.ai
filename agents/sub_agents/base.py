@@ -29,6 +29,7 @@ class BaseSubAgent(ABC):
     name: str
     description: str 
     agent: Runnable
+    prompt: str
 
 
 def __init__(self, *args: Any, **kwargs: Any) -> None: # pragma: no cover
