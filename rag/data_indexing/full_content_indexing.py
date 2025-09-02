@@ -77,9 +77,9 @@ index = faiss.IndexFlatL2(dimension)
 index.add(embeddings_np)
 
 # -------------------- Step 5: Save Index and Metadata --------------------
-faiss.write_index(index, "full_article_content.index")
+faiss.write_index(index, "./rag/data_indexing/indexes_and_metadata_files/full_article_content.index")
 
-with open("full_article_content_metadata.pkl", "wb") as f:
+with open("./rag/data_indexing/indexes_and_metadata_files/full_article_content_metadata.pkl", "wb") as f:
     pickle.dump(metadata, f)
 
 print(f"✅ Indexed {len(metadata)} articles with full semantic embeddings.")
