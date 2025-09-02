@@ -23,14 +23,13 @@ from langgraph.prebuilt import InjectedState
 from langgraph.graph import StateGraph, START, MessagesState
 from langgraph.types import Command
 from langgraph.prebuilt import create_react_agent
+from agents.manager_agent.GraphStates import GraphState
 
 # This allow us to save memory between different API calls and sessions - 
 # This is in-memory only - It does not persist between server restarts, Good for dev/testing, not production
 memory = MemorySaver() 
 
-class AgentState(MessagesState):
-    user_query: Optional[str]
-    agent: Optional[str] = None
+
 
 
 class ManagerAgent:
@@ -64,7 +63,7 @@ class ManagerAgent:
                         )
 
         ## LangGraph build ##
-        graph = StateGraph(AgentState)
+        graph = StateGraph(GraphState)
         graph.add_node(self._supervisor_agent)
         graph.add_node(self.qa_agent.name, self.qa_agent.call)
         graph.add_node(self.article_summary_agent.name, self.article_summary_agent.call)
