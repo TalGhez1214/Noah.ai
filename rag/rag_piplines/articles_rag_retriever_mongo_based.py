@@ -9,9 +9,9 @@ Flow:
 4) hybrid_retrieve             -> $rankFusion (chunks), emit chunk candidates with fused score
 5) CONDITIONAL EDGE:
      - if should_use_ce(state): rerank_with_ce (Cross-Encoder) 
-     - else: route by file_type → chunks_to_articles | apply_recency
+     - else: route by file_type → chunks_to_articles | apply_recency_rerank
 6) chunks_to_articles*         -> collapse chunks → articles (best chunk wins) when file_type="article"
-7) apply_recency               -> generic recency blend (works for chunks or articles) → final top_k
+7) apply_recency_rerank               -> generic recency blend (works for chunks or articles) → final top_k
 
 Strong defaults:
 - Fusion weights: vector search 0.6 / Keyword (BM25) 0.4
@@ -22,7 +22,7 @@ Strong defaults:
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone, time
 import os
 
 # LangGraph / LangChain
@@ -36,8 +36,9 @@ from typing import Optional as Opt, List as Lst
 
 # Mongo / Embeddings / Reranker
 from pymongo import MongoClient
-from sentence_transformers import SentenceTransformer, CrossEncoder
+from sentence_transformers import CrossEncoder
 import numpy as np
+from openai import OpenAI
 
 # ======================
 # CONFIG
@@ -58,7 +59,7 @@ DEFAULT_FILE_TYPE           = os.getenv("DEFAULT_FILE_TYPE", "article")  # "arti
 REQUESTED_K_DEFAULT         = int(os.getenv("REQUESTED_K", "10"))
 FUSION_WEIGHT_VECTOR        = float(os.getenv("FUSION_WEIGHT_VECTOR", "0.6"))
 FUSION_WEIGHT_TEXT          = float(os.getenv("FUSION_WEIGHT_TEXT",   "0.4"))
-VEC_NUM_CANDIDATES          = int(os.getenv("VEC_NUM_CANDIDATES", "240"))
+VEC_NUM_CANDIDATES          = int(os.getenv("VEC_NUM_CANDIDATES", "2400"))
 VEC_LIMIT                   = int(os.getenv("VEC_LIMIT", "240"))
 FT_LIMIT                    = int(os.getenv("FT_LIMIT",  "240"))
 FUSION_LIMIT                = int(os.getenv("FUSION_LIMIT", "480"))
@@ -72,7 +73,6 @@ CE_TOP_N                    = int(os.getenv("CE_TOP_N", "120"))   # max chunk ca
 # Gating knobs (to skip CE when unlikely to help)
 CE_MIN_CANDIDATES           = int(os.getenv("CE_MIN_CANDIDATES", "40"))   # min candidates needed to justify CE
 CE_MARGIN_SKIP              = float(os.getenv("CE_MARGIN_SKIP", "0.25"))  # if top1 is this much above top2 (normalized), skip CE
-CE_FORCE_RERANK             = os.getenv("CE_FORCE_RERANK", "0") in ("1", "true", "True")  # force CE regardless
 
 # Recency
 RECENCY_HALF_LIFE_DAYS           = float(os.getenv("RECENCY_HALF_LIFE_DAYS", "45"))
@@ -80,10 +80,7 @@ RECENCY_WEIGHT                   = float(os.getenv("RECENCY_WEIGHT", "0.25"))
 RECENCY_WEIGHT_WITH_TIMEFILTER   = float(os.getenv("RECENCY_WEIGHT_WITH_TIMEFILTER", "0.15"))
 
 # Embedding model + prefix config
-EMBEDDING_MODEL_NAME = os.getenv("EMBEDDING_MODEL_NAME", "intfloat/multilingual-e5-base")
-_E5_LIKE = "e5" in EMBEDDING_MODEL_NAME.lower()
-EMBEDDING_QUERY_PREFIX   = os.getenv("EMBEDDING_QUERY_PREFIX",   "query: "   if _E5_LIKE else "")
-EMBEDDING_PASSAGE_PREFIX = os.getenv("EMBEDDING_PASSAGE_PREFIX", "passage: " if _E5_LIKE else "")
+OPENAI_EMBED_MODEL  = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-large")  # 3072 dims
 
 # ======================
 # STATE
@@ -97,6 +94,7 @@ class SearchState:
     # extracted
     filters: Dict[str, Any] = field(default_factory=dict)     # {"author":[...], "from":"YYYY-MM-DD", "to":"YYYY-MM-DD"}
     lexical_keywords: List[str] = field(default_factory=list)
+    lexical_query: str = field(default="")  # built in build_queries()
     semantic_query: str = ""
     requested_k: Optional[int] = None
     filter_warnings: List[str] = field(default_factory=list)
@@ -111,12 +109,18 @@ class SearchState:
 # ======================
 
 LLM = ChatOpenAI(model="gpt-4o-mini", temperature=0)
-EMB = SentenceTransformer(EMBEDDING_MODEL_NAME) # TODO: Consider other models
+client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 CE  = CrossEncoder(CROSS_ENCODER_MODEL) if USE_CROSS_ENCODER else None # TODO: Consider other models
 
-def embed_query(text: str) -> List[float]:
-    """Embeds the query. E5-style models benefit from 'query: ' prefix; others use empty prefix."""
-    return EMB.encode([f"{EMBEDDING_QUERY_PREFIX}{text}"], normalize_embeddings=True)[0].tolist()
+def _l2norm(v):
+    v = np.array(v, dtype=float)
+    n = np.linalg.norm(v)
+    return (v / (n + 1e-12)).tolist()
+
+def embed_query(text: str) -> list[float]:
+    # No "query: " prefix needed for OpenAI embeddings
+    resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=[text])
+    return _l2norm(resp.data[0].embedding)
 
 
 # ======================
@@ -166,3 +170,495 @@ class Extraction(BaseModel):
         except (TypeError, ValueError):
             return None            # fallback to default later
         return max(1, min(50, n))  # clamp to [1, 50]
+
+
+ANALYZE_SYSTEM = (
+    "You extract retrieval directives for a hybrid article searcher.\n"
+    "IMPORTANT:\n"
+    "- Read the ENTIRE conversation so far: user messages, assistant replies, and tool messages.\n"
+    "- Understand what the user wants NOW, including references to previously mentioned items.\n"
+    "- Extract ONLY explicit filters (author names, timeframe). If unknown or unsure, set them to null.\n"
+    "- If the user requested a specific number of results (e.g., '3 articles' (3 results), 'give me article about...' (1 result)), set requested_k to that integer; otherwise null.\n"
+    "- Return fields exactly per schema; do not invent values.\n"
+)
+
+def _messages_to_text(messages: List[BaseMessage]) -> str:
+    """Deterministic transcript including tool calls; avoids provider-specific role quirks."""
+    def tag(m: BaseMessage) -> str:
+        if isinstance(m, HumanMessage): return "User"
+        if isinstance(m, AIMessage): return "Assistant"
+        if isinstance(m, ToolMessage): return f"Tool({getattr(m, 'name', 'tool')})"
+        if isinstance(m, SystemMessage): return "System"
+        return m.__class__.__name__
+    return "\n".join(f"{tag(m)}: {m.content if isinstance(m.content, str) else str(m.content)}" for m in messages)
+
+def analyze_and_extract(state: SearchState) -> SearchState:
+    """
+    This function analyzes the conversation history and extracts:
+    - Explicit filters (author names, timeframe)
+    - Lexical keywords (entities, keyphrases)
+    - Semantic query (reuse user query if already clear)
+    - Requested_k (if user asked for a specific number of results)
+    If extraction or parsing fails, it falls back to safe defaults.
+    """
+    structured_llm = LLM.with_structured_output(Extraction)
+    transcript = _messages_to_text(state.messages)
+    prompt = [
+        ("system", ANALYZE_SYSTEM),
+        ("human",
+         f"Conversation so far:\n{transcript}\n\n"
+         f"Latest user query:\n{state.user_query}\n\n"
+         "If a field is unknown or you're not sure, set it to null. Do not fabricate values.")
+    ]
+    try:
+        result: Extraction = structured_llm.invoke(prompt)
+    except ValidationError:
+        result = Extraction(filters=Filters(), lexical_keywords=[], semantic_query=state.user_query, requested_k=None)
+    except Exception:
+        result = Extraction(filters=Filters(), lexical_keywords=[], semantic_query=state.user_query, requested_k=None)
+
+    f: Dict[str, Any] = {}
+    if result.filters.author: f["author"] = result.filters.author
+    if result.filters.from_: f["from"] = result.filters.from_
+    if result.filters.to:     f["to"]   = result.filters.to
+
+    state.filters = f
+    state.lexical_keywords = result.lexical_keywords or []
+    state.semantic_query = result.semantic_query or state.user_query
+    state.requested_k = result.requested_k
+    return state
+
+
+# ======================
+# VALIDATE FILTERS (on CHUNK level)
+# ======================
+
+def _parse_iso_date(s: Optional[str]) -> Optional[datetime]:
+    """
+    This helper attempts to parse an ISO date string (YYYY-MM-DD) into a datetime object
+    for valid MongoDB queries. Returns None if parsing fails.
+    """
+    if not s: return None
+    try:
+        return datetime.fromisoformat(s)
+    except Exception:
+        return None
+
+def validate_filters(state: SearchState) -> SearchState:
+    # make client tz-aware so datetimes from Mongo are UTC-aware
+    client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc); db = client[DB_NAME]
+    warnings: List[str] = []
+
+    # Authors must exist on CHUNKS
+    authors = state.filters.get("author") or []
+    if authors:
+        existing = set(db[CHUNKS_COL].distinct("author", {"author": {"$in": authors}}))
+        valid = [a for a in authors if a in existing]
+        if not valid:
+            warnings.append("Author filter removed (no matches on chunks).")
+        state.filters["author"] = valid
+
+    # Dates must parse; swap if from>to
+    d_from = _parse_iso_date(state.filters.get("from"))
+    d_to   = _parse_iso_date(state.filters.get("to"))
+    if state.filters.get("from") and not d_from:
+        warnings.append(f"Invalid 'from' date '{state.filters.get('from')}' removed.")
+    if state.filters.get("to") and not d_to:
+        warnings.append(f"Invalid 'to' date '{state.filters.get('to')}' removed.")
+    if d_from and d_to and d_from > d_to:
+        warnings.append("Swapped 'from' and 'to' (from > to).")
+        d_from, d_to = d_to, d_from
+
+    state.filters["from"] = d_from.date().isoformat() if d_from else None
+    state.filters["to"]   = d_to.date().isoformat() if d_to else None
+
+    state.filter_warnings = warnings
+    return state
+
+
+# ======================
+# BUILD QUERIES
+# ======================
+
+def build_lexical_query(state: SearchState):
+    return " ".join(state.lexical_keywords) if state.lexical_keywords else state.user_query
+
+# ======================
+# TZ-AWARE DATETIME HELPERS  
+# ======================
+
+def ensure_utc_aware(dt_or_str):
+    """Coerce DB/string datetimes to tz-aware UTC; assume UTC if missing tzinfo."""
+    if dt_or_str is None:
+        return None
+    if isinstance(dt_or_str, str):
+        try:
+            dt = datetime.fromisoformat(dt_or_str)
+        except ValueError:
+            return None
+    else:
+        dt = dt_or_str
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+def parse_date_start_utc(date_str: str) -> datetime:
+    """YYYY-MM-DD → 00:00:00 UTC (tz-aware)."""
+    d = datetime.fromisoformat(date_str).date()
+    return datetime.combine(d, time.min, tzinfo=timezone.utc)
+
+def parse_date_end_utc_inclusive(date_str: str) -> datetime:
+    """YYYY-MM-DD → 23:59:59.999999 UTC (tz-aware)."""
+    d = datetime.fromisoformat(date_str).date()
+    return datetime.combine(d, time.max, tzinfo=timezone.utc)
+
+
+# ======================
+# HYBRID RETRIEVAL ($rankFusion) → CHUNK CANDIDATES
+# ======================
+
+def _vector_filter_doc(filters: Dict[str, Any]) -> Dict[str, Any]:
+    """Builds a MongoDB filter document for vector search based on provided filters."""
+    f: Dict[str, Any] = {}
+    if filters.get("author"):
+        f["author"] = {"$in": filters["author"]}
+    rng = {}
+    # ✅ use tz-aware bounds
+    if filters.get("from"): rng["$gte"] = parse_date_start_utc(filters["from"])
+    if filters.get("to"):   rng["$lte"] = parse_date_end_utc_inclusive(filters["to"])
+    if rng: f["published_at"] = rng
+    return f
+
+def _search_filter_compound(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Builds a list of compound filter clauses for full-text search based on provided filters."""
+    f = []
+    if filters.get("author"):
+        f.append({
+            "compound": {
+                "should": [{"equals": {"path": "author", "value": a}} for a in filters["author"]],
+                "minimumShouldMatch": 1
+            }
+        })
+    rng = {}
+    # ✅ use tz-aware bounds
+    if filters.get("from"): rng["gte"] = parse_date_start_utc(filters["from"])
+    if filters.get("to"):   rng["lte"] = parse_date_end_utc_inclusive(filters["to"])
+    if rng:
+        f.append({"range": {"path": "published_at", **rng}})
+    return f
+
+def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
+    client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc)
+    db = client[DB_NAME]
+    chunks = db[CHUNKS_COL]
+
+    qvec = embed_query(state.semantic_query)
+    vfilter = _vector_filter_doc(state.filters)
+    sfilter = _search_filter_compound(state.filters)
+    state.lexical_query = build_lexical_query(state)
+
+    pipeline = [
+        {
+            "$rankFusion": {
+                "input": {
+                    "pipelines": {
+                        "vectorPipeline": [
+                            {
+                                "$vectorSearch": {
+                                    "index": VECTOR_INDEX,
+                                    "path": VECTOR_PATH, 
+                                    "queryVector": qvec,
+                                    "numCandidates": VEC_NUM_CANDIDATES,# Not sure what is this
+                                    "limit": VEC_LIMIT, # 
+                                    **({"filter": vfilter} if vfilter else {})
+                                }
+                            }
+                        ],
+                        "fullTextPipeline": [
+                            {
+                                "$search": {
+                                    "index": FULLTEXT_INDEX,
+                                    "compound": {
+                                        "filter": sfilter,
+                                        "should": [
+                                            { "text": { "path": ["title"], "query": state.lexical_query,
+                                                        "score": { "boost": { "value": 3 } } } }, # multiplies the BM25 score for matches on "title", giving title hits extra weight vs. body text. It’s a straight multiplicative boost.
+                                            { "text": { "path": ["content_chunk"], "query": state.lexical_query } } # regular BM25 on chunck body, optional- add "heading"
+                                        ],
+                                        "minimumShouldMatch": 1
+                                    }
+                                }
+                            },
+                            {"$limit": FT_LIMIT} 
+                        ]
+                    }
+                },
+                "combination": { "weights": {
+                    "vectorPipeline": FUSION_WEIGHT_VECTOR,
+                    "fullTextPipeline": FUSION_WEIGHT_TEXT
+                }},
+                "scoreDetails": False
+            }
+        },
+        {"$set": {"_score": {"$meta": "searchScore"}}},
+        {"$limit": FUSION_LIMIT}, # TODO: Understand what is this
+
+        {"$project": {
+            "_id": 1,
+            "id": "$_id",
+            "type": {"$literal": "chunk"},
+            "article_id": 1,
+            "title": 1,
+            "author": 1,
+            "published_at": 1,
+            "snippet": "$content_chunk",
+            "score": "$_score",         # base score (fused)
+            "fused_score": "$_score"
+        }}
+    ]
+
+    state.candidates = list(chunks.aggregate(pipeline))
+    return state
+
+# ======================
+# CROSS-ENCODER RERANK (chunk-level)
+# ======================
+
+def rerank_with_cross_encoder(state: SearchState) -> SearchState:
+    """Reranks the top candidates using a cross-encoder model."""
+    # If called, CE is enabled by gating. Still guard for safety.
+    if CE is None or not state.candidates:
+        return state
+
+    K = state.requested_k or REQUESTED_K_DEFAULT
+    cap = min(max(K * 12, 60), CE_TOP_N)  # e.g., 60–120
+    cand = state.candidates[:cap]
+
+    pairs = []
+    for c in cand:
+        t = (c.get("title") or "")
+        s = (c.get("snippet") or "")
+        doc = (t + "\n" + s).strip()
+        if len(doc) > 1200:
+            doc = doc[:1200]
+        pairs.append((state.semantic_query, doc))
+
+    ce_scores = CE.predict(pairs)
+    ce_scores = np.asarray(ce_scores, dtype=float).reshape(-1)
+    fused = np.array([c["fused_score"] for c in cand], dtype=float)
+
+    def norm(x):
+        lo, hi = float(np.min(x)), float(np.max(x))
+        return (x - lo) / (hi - lo + 1e-9) if hi > lo else np.ones_like(x) * 0.5
+    n_ce, n_f = norm(ce_scores), norm(fused)
+    final = CE_WEIGHT * n_ce + (1.0 - CE_WEIGHT) * n_f
+
+    for i, c in enumerate(cand):
+        c["ce_score"] = float(ce_scores[i])
+        c["norm_ce"] = float(n_ce[i])
+        c["norm_fused"] = float(n_f[i])
+        c["score"] = float(final[i])  # overwrite base for downstream
+
+    cand.sort(key=lambda x: x["score"], reverse=True)
+    state.candidates = cand + state.candidates[cap:]
+    return state
+
+# ======================
+# CONDITIONAL: SHOULD WE USE CE?
+# ======================
+
+def _should_use_ce(state: SearchState) -> bool:
+    """Decides whether to use cross-encoder reranking based on state and config."""
+    if not USE_CROSS_ENCODER or CE is None or not state.candidates:
+        return False
+
+    # Not enough candidates to justify CE
+    if len(state.candidates) < CE_MIN_CANDIDATES:
+        return False
+
+    # If user asked for very small K and top-2 already have a big margin, skip CE
+    try:
+        K = state.requested_k or REQUESTED_K_DEFAULT
+        s0 = float(state.candidates[0]["score"])
+        s1 = float(state.candidates[1]["score"]) if len(state.candidates) > 1 else s0
+        margin = (s0 - s1) / (abs(s0) + 1e-9)  # normalize by top score
+        if K <= 2 and margin >= CE_MARGIN_SKIP:
+            return False
+    except Exception:
+        pass
+
+    return True
+
+
+# ======================
+# CONDITIONAL: CHUNK → ARTICLE
+# ======================
+
+def chunks_to_articles(state: SearchState) -> SearchState:
+    """Collapse chunk candidates to unique articles by best chunk score,
+    and attach article metadata INCLUDING full `content`."""
+    if not state.candidates:
+        return state
+
+    client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc)
+    db = client[DB_NAME]
+    chunks = db[CHUNKS_COL]
+
+    pipeline = [
+        # Only fetch the chunk docs we already shortlisted
+        {"$match": {"_id": {"$in": [c["id"] for c in state.candidates]}}},
+
+        # 1) PROJECT (on chunks): keep only the fields we need downstream
+        {"$project": {
+            "_id": 1,
+            "article_id": 1,
+            "author": 1,
+            "title": 1,
+            "published_at": 1,
+            "content_chunk": 1
+        }},
+
+        # Join parent article and fetch only necessary fields (including FULL content)
+        {"$lookup": {
+            "from": ARTICLES_COL,
+            "let": {"aid": "$article_id"},
+            "pipeline": [
+                {"$match": {"$expr": {"$eq": ["$_id", "$$aid"]}}},
+                {"$project": {
+                    "title": 1,
+                    "url": 1,
+                    "author": 1,
+                    "published_at": 1,
+                    "content": 1          # <-- bring full article content
+                }}
+            ],
+            "as": "article"
+        }},
+        {"$unwind": "$article"},
+
+        # 2) PROJECT (shape final record we’ll use for collapsing & scoring)
+        {"$project": {
+            "_id": 1,
+            "article_id": 1,
+
+            # chunk-side fields (for fallback + snippet)
+            "content_chunk": 1,
+
+            # article-side fields
+            "article_title": "$article.title",
+            "article_url": "$article.url",
+            "article_author": "$article.author",
+            "article_published_at": "$article.published_at",
+            "article_content": "$article.content"   # <-- surfaced as a field
+        }}
+    ]
+
+    docs = list(chunks.aggregate(pipeline))
+    score_map = {c["id"]: c["score"] for c in state.candidates}
+
+    # Collapse chunks → articles by picking the chunk with max score per article
+    best_by_article: Dict[Any, Dict[str, Any]] = {}
+    for d in docs:
+        cid = d["_id"]
+        aid = d["article_id"]
+        sc = float(score_map.get(cid, 0.0))
+        cur = best_by_article.get(aid)
+        if (cur is None) or (sc > cur["score"]):
+            # Take this chunk as best for the article (max score)
+            best_by_article[aid] = {
+                "id": aid,
+                "type": "article",
+                "title": d.get("article_title") or d.get("chunk_title"),
+                "url": d.get("article_url"),
+                "author": d.get("article_author") or d.get("chunk_author"),
+                "published_at": d.get("article_published_at") or d.get("chunk_published_at"),
+                "snippet": d.get("content_chunk"),
+                "content": d.get("article_content"),  # <-- full content now present
+                "score": sc
+            }
+
+    state.candidates = list(best_by_article.values())
+    return state
+
+# ======================
+# RECENCY (generic)
+# ======================
+
+def _recency_weight_for(filters: Dict[str, Any]) -> float:
+    return RECENCY_WEIGHT_WITH_TIMEFILTER if (filters.get("from") or filters.get("to")) else RECENCY_WEIGHT
+
+def apply_recency(state: SearchState) -> SearchState:
+    cands = state.candidates or []
+    if not cands:
+        state.top_results = []
+        return state
+
+    K = state.requested_k or REQUESTED_K_DEFAULT
+    w = _recency_weight_for(state.filters)
+    H = RECENCY_HALF_LIFE_DAYS
+
+    vals = np.array([c["score"] for c in cands], dtype=float)
+    lo, hi = float(vals.min()), float(vals.max())
+    den = (hi - lo) if hi > lo else 1.0
+
+    now = datetime.now(timezone.utc)   # ✅ tz-aware "now"
+    out = []
+    for c in cands:
+        norm = (c["score"] - lo) / den if den > 0 else 0.5
+        # ✅ coerce published_at to tz-aware UTC (handles str or datetime)
+        pub = ensure_utc_aware(c.get("published_at"))
+        if pub:
+            age_days = max((now - pub).days, 0)
+            rec = float(np.exp(- age_days / H))
+        else:
+            rec = 0.0
+        final = (1.0 - w) * norm + w * rec
+        out.append({**c, "norm_score": norm, "recency": rec, "final_score": final})
+
+    out.sort(key=lambda x: x["final_score"], reverse=True)
+    state.top_results = out[:K]
+    return state
+
+
+# ======================
+# BUILD GRAPH (CE as a CONDITIONAL NODE)
+# ======================
+
+def build_graph():
+    g = StateGraph(SearchState)
+    g.add_node("analyze_and_extract", analyze_and_extract)
+    g.add_node("validate_filters",   validate_filters)
+    g.add_node("hybrid_retrieve",    hybrid_retrieve_rankfusion)
+    g.add_node("rerank_with_ce",     rerank_with_cross_encoder)
+    g.add_node("chunks_to_articles", chunks_to_articles)
+    g.add_node("apply_recency_rerank",      apply_recency)
+
+    g.set_entry_point("analyze_and_extract")
+    g.add_edge("analyze_and_extract", "validate_filters")
+    g.add_edge("validate_filters",   "hybrid_retrieve")
+
+    # Conditional: after hybrid retrieval decide CE or skip + route by file_type
+    def decide_next_after_retrieval(state: SearchState):
+        if _should_use_ce(state):
+            return "rerank_with_ce"
+        ft = (state.file_type or DEFAULT_FILE_TYPE).strip().lower()
+        return "chunks_to_articles" if ft == "article" else "apply_recency_rerank"
+
+    g.add_conditional_edges("hybrid_retrieve", decide_next_after_retrieval, {
+        "rerank_with_ce":    "rerank_with_ce",
+        "chunks_to_articles":"chunks_to_articles",
+        "apply_recency_rerank":     "apply_recency_rerank"
+    })
+
+    # After CE (if taken), route again by file_type
+    def route_after_ce(state: SearchState):
+        ft = (state.file_type or DEFAULT_FILE_TYPE).strip().lower()
+        return "chunks_to_articles" if ft == "article" else "apply_recency_rerank"
+
+    g.add_conditional_edges("rerank_with_ce", route_after_ce, {
+        "chunks_to_articles":"chunks_to_articles",
+        "apply_recency_rerank":     "apply_recency_rerank"
+    })
+
+    g.add_edge("chunks_to_articles", "apply_recency_rerank")
+    g.add_edge("apply_recency_rerank", END)
+    return g.compile()
+
