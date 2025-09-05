@@ -1,55 +1,16 @@
-# from fastapi import FastAPI
-# from pydantic import BaseModel
-# from fastapi.middleware.cors import CORSMiddleware
-# from dotenv import load_dotenv
-# from langchain_core.messages import HumanMessage, AIMessage
-# from agents.manager_agent.manager_agent import ManagerAgent
-# from api_articles import router as articles_router
-
-# load_dotenv()
-
-# app = FastAPI(title="Noah AI News Agent", version="1.0")
-
-# app.add_middleware(
-#     CORSMiddleware,
-#     allow_origins=["*"],
-#     allow_credentials=True,
-#     allow_methods=["*"],
-#     allow_headers=["*"],
-# )
-# app.include_router(articles_router)
-
-
-# class AskRequest(BaseModel):
-#     query: str
-
-# class AskResponse(BaseModel):
-#     result: str
-
-# @app.post("/ask", response_model=AskResponse)
-# def ask_user(request: AskRequest):
-    
-#     user_id = "123" # TODO: Replace with actual user ID if needed using MongoDB request
-#     manager = ManagerAgent(user_query=request.query, user_id=user_id)
-#     messages = manager.chat()
-
-#     last_ai = next((m.content for m in reversed(messages) if isinstance(m, AIMessage)), "...")
-#     return AskResponse(result=last_ai)
-
 from typing import Any, Dict, List, Optional
 from datetime import datetime
 import math
 import os
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from dotenv import load_dotenv
 from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from slugify import slugify
-from pydantic import BaseModel, Field, field_validator
-from typing import Any, List, Optional
 
 # --- Load env (.env) ---
 load_dotenv()
@@ -73,13 +34,14 @@ app.add_middleware(
 # =============================================================================
 # MongoDB
 # =============================================================================
+# NOTE: using your env var names here
 MONGO_URI = os.getenv("MONGODB_URI")
 MONGO_DB = os.getenv("DB_NAME")
 MONGO_COLLECTION = os.getenv("COLLECTION_NAME", "articles")
 
 if not MONGO_URI or not MONGO_DB:
     raise RuntimeError(
-        "Missing Mongo settings. Please set MONGO_URI and MONGO_DB in your environment (or .env)."
+        "Missing Mongo settings. Please set MONGODB_URI and DB_NAME in your environment (or .env)."
     )
 
 client = AsyncIOMotorClient(MONGO_URI)
@@ -89,21 +51,6 @@ col = db[MONGO_COLLECTION]
 # =============================================================================
 # Schemas (Mongo -> UI mapping)
 # =============================================================================
-class PyObjectId(str):
-    @classmethod
-    def __get_pydantic_core_schema__(cls, *args, **kwargs):
-        from pydantic_core import core_schema
-        return core_schema.no_info_after_validator_function(cls.validate, core_schema.str_schema())
-
-    @classmethod
-    def validate(cls, v: Any) -> str:
-        if isinstance(v, ObjectId):
-            return str(v)
-        if ObjectId.is_valid(v):
-            return str(v)
-        raise ValueError("Invalid ObjectId")
-
-
 class MongoArticle(BaseModel):
     # Store _id as a string in the model (and coerce in a validator)
     id: str = Field(alias="_id")
@@ -257,23 +204,85 @@ async def get_article_by_slug(slug: str):
     raise HTTPException(status_code=404, detail="Article not found")
 
 # =============================================================================
-# Your existing /ask endpoint (kept)
+# /ask endpoint — now page-aware
 # =============================================================================
-from pydantic import BaseModel as PydBaseModel
 from langchain_core.messages import HumanMessage, AIMessage  # noqa: F401
 from agents.manager_agent.manager_agent import ManagerAgent  # keep your import
 
-
-class AskRequest(PydBaseModel):
+class AskRequest(BaseModel):
     query: str
+    page_url: Optional[str] = None  # ✅ NEW: current page URL from the client
 
-class AskResponse(PydBaseModel):
+class AskResponse(BaseModel):
     result: str
 
+from urllib.parse import urlparse, unquote
+
+async def _find_doc_for_page(page_url: Optional[str]) -> Optional[Dict[str, Any]]:
+    """
+    Resolve the current page's Mongo document.
+    A) If URL looks like your app's /articles/<slug>, match by slugified title.
+    B) Else try direct match by the stored source URL: { url: page_url }.
+    """
+    if not page_url:
+        return None
+
+    try:
+        parsed = urlparse(page_url)
+    except Exception:
+        return None
+
+    # Normalize path: strip leading/trailing slashes, drop any trailing slash, decode
+    raw_path = (parsed.path or "").strip("/")
+    path = unquote(raw_path)
+    parts = [p for p in path.split("/") if p]
+
+    # Case A: app route /articles/<slug>
+    if len(parts) >= 2 and parts[0].lower() == "articles":
+        slug = parts[1].lower().strip()
+        # Fast projection pass: compare slugified titles in Python (no DB scan of full docs)
+        projection = {"title": 1}
+        async for d in col.find({}, projection):
+            title = d.get("title", "")
+            if title and slugify(title).lower() == slug:
+                return await col.find_one({"_id": d["_id"]})
+
+        # Fallback (best-effort): try regex on title with all slug tokens present
+        # e.g., "saas companies unbundle ai to fix margins and calm renewals"
+        tokens = [t for t in slug.replace("-", " ").split() if t]
+        if tokens:
+            and_regex = [{"title": {"$regex": t, "$options": "i"}} for t in tokens]
+            candidate = await col.find_one({"$and": and_regex}, {"title": 1})
+            if candidate:
+                return await col.find_one({"_id": candidate["_id"]})
+
+    # Case B: try exact URL match to the source URL in Mongo (for off-site originals)
+    doc = await col.find_one({"url": page_url})
+    if doc:
+        return doc
+
+    return None
+
 @app.post("/ask", response_model=AskResponse)
-def ask_user(request: AskRequest):
+async def ask_user(request: AskRequest):
+    """
+    Accepts:
+      - query: the user question
+      - page_url: the current page URL from the client
+
+    Looks up the matching article in Mongo and injects it into the manager's state
+    as 'current_page'.
+    """
+    # Resolve current page document (or None)
+    current_doc = await _find_doc_for_page(request.page_url)
+
     user_id = "123"  # TODO: replace with real user id if needed
-    manager = ManagerAgent(user_query=request.query, user_id=user_id)
+    manager = ManagerAgent(
+        user_query=request.query,
+        user_id=user_id,
+        current_page=current_doc, 
+    )
+
     messages = manager.chat()
     last_ai = next((m.content for m in reversed(messages) if isinstance(m, AIMessage)), "...")
     return AskResponse(result=last_ai)
