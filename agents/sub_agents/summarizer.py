@@ -87,7 +87,7 @@ class SummarizerSubAgent(BaseSubAgent):
             state: Annotated[dict, InjectedState]  # injected automatically by LangGraph
         ) -> str:
             try:
-                doc = state.get("current_page")
+                doc = state.get("   ")
                 return doc
             except Exception:
                 return {}
