@@ -12,7 +12,7 @@ from agents.prompts import SUPERVISOR_PROMPT, QA_PROMPT, SUMMARY_PROMPT, article
 
 from agents.sub_agents.qa import QASubAgent
 from agents.sub_agents.summarizer import SummarizerSubAgent
-from agents.sub_agents.articles_finder_agent import ArticalFinderSubAgent
+from agents.sub_agents.articles_finder import ArticalFinderSubAgent
 from agents.sub_agents.fallback import FallbackSubAgent
 
 from rag.rag_piplines.rag_retriever import RAGRetriever
@@ -33,10 +33,11 @@ memory = MemorySaver()
 
 
 class ManagerAgent:
-    def __init__(self, model: str = "gpt-4o-mini", user_query: str = "", user_id: Optional[str] = None):
+    def __init__(self, model: str = "gpt-4o-mini", user_query: str = "", user_id: Optional[str] = None, current_page: Optional[dict] = None):
         self.user_query = user_query
         self.user_id = user_id
         self.retriever = RAGRetriever()
+        self.current_page = current_page
 
         
         ## Available sub-agents ##
@@ -121,6 +122,7 @@ class ManagerAgent:
             "messages": new_message,
             "user_query": self.user_query,  # Store the user query in the state
             "agent": None,  # Initially no agent is assigned
+            "current_page": self.current_page,
         }
         # calling manager agent to start working
         updated = self.app.invoke(graph_state, thread) # Here we added the user query as a new message to the Graph state
