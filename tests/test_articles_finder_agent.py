@@ -1,5 +1,5 @@
 import pytest
-from agents.sub_agents.articles_finder_agent import ArticalFinderSubAgent
+from agents.sub_agents.articles_finder import ArticalFinderSubAgent
 from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema

@@ -14,7 +14,11 @@ class ArticalFinderSubAgent(BaseSubAgent):
     Builds a ReAct agent for find relevant articles for a specific user query.
     """
 
-    def __init__(self, retriever, model: str = "gpt-4o-mini", prompt = article_finder_prompt) -> None:
+    def __init__(self, 
+                 retriever, 
+                 model: str = "gpt-4o-mini", 
+                 prompt = article_finder_prompt) -> None:
+        
         self.name = "articles_finder_agent"
         self.description = "This agent finds the most relevant articles for the user query"
         self.retriever = retriever
@@ -28,12 +32,6 @@ class ArticalFinderSubAgent(BaseSubAgent):
 
         self._output_parser = StructuredOutputParser.from_response_schemas(self._response_schemas)
 
-        # # Define the prompt template for the agent
-        # self.prompt = PromptTemplate(
-        #         input_variables=["user_query", "title", "author", "content"],
-        #         partial_variables={"format_instructions": format_instructions},
-        #         template=prompt,
-        #     )
         self.prompt = prompt
 
         self._llm = ChatOpenAI(model=model, temperature=0.0)
