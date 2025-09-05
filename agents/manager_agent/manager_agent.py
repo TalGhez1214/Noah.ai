@@ -12,7 +12,7 @@ from agents.prompts import SUPERVISOR_PROMPT, QA_PROMPT, SUMMARY_PROMPT, article
 
 from agents.sub_agents.qa import QASubAgent
 from agents.sub_agents.summarizer import SummarizerSubAgent
-from agents.sub_agents.articles_finder_agent import ArticalFinderSubAgent
+from agents.sub_agents.articles_finder import ArticalFinderSubAgent
 from agents.sub_agents.fallback import FallbackSubAgent
 
 from rag.rag_piplines.rag_retriever import RAGRetriever
