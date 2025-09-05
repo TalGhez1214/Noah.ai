@@ -218,6 +218,47 @@ class AskResponse(BaseModel):
 
 from urllib.parse import urlparse, unquote
 
+
+from datetime import datetime, date
+from bson import ObjectId
+
+def _sanitize_for_state(value):
+    """Recursively convert Mongo / Python objects into msgpack-safe types."""
+    if isinstance(value, ObjectId):
+        return str(value)
+    if isinstance(value, (datetime, date)):
+        # ISO8601 string
+        return value.isoformat()
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="ignore")
+    if isinstance(value, dict):
+        return {str(k): _sanitize_for_state(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_sanitize_for_state(v) for v in value]
+    if isinstance(value, tuple):
+        return tuple(_sanitize_for_state(v) for v in value)
+    # numbers, strings, bool, None are fine
+    return value
+
+def _slim_doc(doc: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """(Optional) keep only fields your agent actually needs."""
+    if not doc:
+        return None
+    return {
+        "_id": doc.get("_id"),
+        "title": doc.get("title"),
+        "url": doc.get("url"),
+        "topic": doc.get("topic"),
+        "source": doc.get("source"),
+        "published_at": doc.get("published_at"),
+        "fetched_at": doc.get("fetched_at"),
+        "section": doc.get("section"),
+        "coverImage": doc.get("coverImage"),
+        "author": doc.get("author"),
+        "content": doc.get("content"),
+        "readingTime": doc.get("readingTime"),
+    }
+
 async def _find_doc_for_page(page_url: Optional[str]) -> Optional[Dict[str, Any]]:
     """
     Resolve the current page's Mongo document.
@@ -275,6 +316,12 @@ async def ask_user(request: AskRequest):
     """
     # Resolve current page document (or None)
     current_doc = await _find_doc_for_page(request.page_url)
+
+    # (optional) reduce payload to what's needed
+    current_doc = _slim_doc(current_doc)
+
+    # ✅ sanitize recursively so langgraph/msgpack can serialize the state
+    current_doc = _sanitize_for_state(current_doc)
 
     user_id = "123"  # TODO: replace with real user id if needed
     manager = ManagerAgent(
