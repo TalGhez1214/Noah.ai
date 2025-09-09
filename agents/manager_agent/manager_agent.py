@@ -31,7 +31,6 @@ memory = MemorySaver()
 
 
 
-
 class ManagerAgent:
     def __init__(self, model: str = "gpt-4o-mini", user_query: str = "", user_id: Optional[str] = None, current_page: Optional[dict] = None):
         self.user_query = user_query

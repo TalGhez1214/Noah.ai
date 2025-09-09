@@ -44,13 +44,14 @@ from openai import OpenAI
 # CONFIG
 # ======================
 
-MONGO_URI     = os.getenv("MONGO_URI", "mongodb+srv://...")
+MONGO_URI     = os.getenv("MONGODB_URI", "mongodb+srv://...")
 DB_NAME       = os.getenv("DB_NAME", "content_db")
 CHUNKS_COL    = os.getenv("CHUNKS_COL", "article_chunks")
 ARTICLES_COL  = os.getenv("ARTICLES_COL", "articles")
 
 # Atlas Search config
 FULLTEXT_INDEX = os.getenv("FULLTEXT_INDEX", "article_search")                  # full-text over chunks
+CHUNKTEXT_INDEX = os.getenv("CHUNKTEXT_INDEX", "chunk_search")                  # full-text over chunks
 VECTOR_INDEX   = os.getenv("VECTOR_INDEX",   "article_chuncks_vector_search")   # vector index over chunks
 VECTOR_PATH    = os.getenv("VECTOR_PATH",    "dense_vector")                    # vector field on chunks
 
@@ -59,6 +60,7 @@ DEFAULT_FILE_TYPE           = os.getenv("DEFAULT_FILE_TYPE", "article")  # "arti
 REQUESTED_K_DEFAULT         = int(os.getenv("REQUESTED_K", "10"))
 FUSION_WEIGHT_VECTOR        = float(os.getenv("FUSION_WEIGHT_VECTOR", "0.6"))
 FUSION_WEIGHT_TEXT          = float(os.getenv("FUSION_WEIGHT_TEXT",   "0.4"))
+RRF_K                       = int(os.getenv("RRF_K", "60"))
 VEC_NUM_CANDIDATES          = int(os.getenv("VEC_NUM_CANDIDATES", "2400"))
 VEC_LIMIT                   = int(os.getenv("VEC_LIMIT", "240"))
 FT_LIMIT                    = int(os.getenv("FT_LIMIT",  "240"))
@@ -345,78 +347,162 @@ def _search_filter_compound(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
         f.append({"range": {"path": "published_at", **rng}})
     return f
 
+
+def _rrf_fuse(vec_docs, ft_docs, w_vec, w_ft, k):
+    """
+    Reciprocal Rank Fusion with weights:
+      score(d) = w_vec * 1/(k + rank_vec(d)) + w_ft * 1/(k + rank_ft(d))
+    If a doc is absent from a list, that term just doesn't contribute.
+    """
+    r_vec = {d["_id"]: i for i, d in enumerate(vec_docs)}
+    r_ft  = {d["_id"]: i for i, d in enumerate(ft_docs)}
+    ids = set(r_vec) | set(r_ft)
+
+    fused = []
+    for _id in ids:
+        s = 0.0
+        if _id in r_vec:
+            s += w_vec * (1.0 / (k + r_vec[_id] + 1))
+        if _id in r_ft:
+            s += w_ft * (1.0 / (k + r_ft[_id] + 1))
+        fused.append((_id, s))
+
+    fused.sort(key=lambda x: x[1], reverse=True)
+    return fused
+
 def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
+    """
+    Manual hybrid fusion (RRF) for free tiers / clusters without $rankFusion:
+    - Run $vectorSearch and $search independently on CHUNKS
+    - Fuse with weighted RRF
+    - Shape candidates like the $rankFusion path
+    """
     client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc)
     db = client[DB_NAME]
     chunks = db[CHUNKS_COL]
 
-    qvec = embed_query(state.semantic_query)
-    vfilter = _vector_filter_doc(state.filters)
-    sfilter = _search_filter_compound(state.filters)
-    state.lexical_query = build_lexical_query(state)
+    # Build query parts
+    qvec    = embed_query(state.semantic_query)
+    vfilter = _vector_filter_doc(state.filters)           # {'author': {'$in': ...}, 'published_at': {...}} if any
+    sfilter = _search_filter_compound(state.filters)      # [compound/equals, range, ...] for Atlas Search
+    state.lexical_query = build_lexical_query(state)      # join keywords or fallback to user_query
 
-    pipeline = [
-        {
-            "$rankFusion": {
-                "input": {
-                    "pipelines": {
-                        "vectorPipeline": [
-                            {
-                                "$vectorSearch": {
-                                    "index": VECTOR_INDEX,
-                                    "path": VECTOR_PATH, 
-                                    "queryVector": qvec,
-                                    "numCandidates": VEC_NUM_CANDIDATES,# Not sure what is this
-                                    "limit": VEC_LIMIT, # 
-                                    **({"filter": vfilter} if vfilter else {})
-                                }
-                            }
-                        ],
-                        "fullTextPipeline": [
-                            {
-                                "$search": {
-                                    "index": FULLTEXT_INDEX,
-                                    "compound": {
-                                        "filter": sfilter,
-                                        "should": [
-                                            { "text": { "path": ["title"], "query": state.lexical_query,
-                                                        "score": { "boost": { "value": 3 } } } }, # multiplies the BM25 score for matches on "title", giving title hits extra weight vs. body text. It’s a straight multiplicative boost.
-                                            { "text": { "path": ["content_chunk"], "query": state.lexical_query } } # regular BM25 on chunck body, optional- add "heading"
-                                        ],
-                                        "minimumShouldMatch": 1
-                                    }
-                                }
-                            },
-                            {"$limit": FT_LIMIT} 
-                        ]
-                    }
-                },
-                "combination": { "weights": {
-                    "vectorPipeline": FUSION_WEIGHT_VECTOR,
-                    "fullTextPipeline": FUSION_WEIGHT_TEXT
-                }},
-                "scoreDetails": False
-            }
-        },
-        {"$set": {"_score": {"$meta": "searchScore"}}},
-        {"$limit": FUSION_LIMIT}, # TODO: Understand what is this
-
+    # --- 1) vector branch ---
+    vec_pipeline = [
+        {"$vectorSearch": {
+            "index": VECTOR_INDEX,
+            "path": VECTOR_PATH,
+            "queryVector": qvec,
+            "numCandidates": VEC_NUM_CANDIDATES,
+            "limit": VEC_LIMIT,
+            **({"filter": vfilter} if vfilter else {})
+        }},
+        {"$set": {"_score_vec": {"$meta": "vectorSearchScore"}}},
         {"$project": {
             "_id": 1,
-            "id": "$_id",
-            "type": {"$literal": "chunk"},
             "article_id": 1,
             "title": 1,
             "author": 1,
             "published_at": 1,
             "snippet": "$content_chunk",
-            "score": "$_score",         # base score (fused)
-            "fused_score": "$_score"
-        }}
+            "_score_vec": 1
+        }},
+        {"$limit": VEC_LIMIT}
     ]
 
-    state.candidates = list(chunks.aggregate(pipeline))
+    # --- 2) full-text branch (BM25 on chunks) ---
+    ft_pipeline = [
+        {"$search": {
+            "index": CHUNKTEXT_INDEX,
+            "compound": {
+                "filter": sfilter,                     # author/date filters (if any)
+                "should": [
+                    {"text": {
+                        "path": ["title"],
+                        "query": state.lexical_query,
+                        "score": {"boost": {"value": 3}}
+                    }},
+                    {"text": {
+                        "path": ["content_chunk"],
+                        "query": state.lexical_query
+                    }}
+                ],
+                "minimumShouldMatch": 1
+            }
+        }},
+        {"$set": {"_score_ft": {"$meta": "searchScore"}}},
+        {"$project": {
+            "_id": 1,
+            "article_id": 1,
+            "title": 1,
+            "author": 1,
+            "published_at": 1,
+            "snippet": "$content_chunk",
+            "_score_ft": 1
+        }},
+        {"$limit": FT_LIMIT}
+    ]
+
+    vec_docs = list(chunks.aggregate(vec_pipeline))
+    ft_docs  = list(chunks.aggregate(ft_pipeline))
+
+    if not vec_docs and not ft_docs:
+        state.candidates = []
+        return state
+
+    # --- 3) fuse with RRF (weighted by your fusion weights) ---
+    fused_pairs = _rrf_fuse(
+        vec_docs,
+        ft_docs,
+        FUSION_WEIGHT_VECTOR,
+        FUSION_WEIGHT_TEXT,
+        RRF_K
+    )
+
+    # Build a lookup of doc fields (prefer vector copy if present; otherwise BM25 copy)
+    by_id = {}
+    for d in vec_docs:
+        by_id[d["_id"]] = {
+            "id": d["_id"],
+            "type": "chunk",
+            "article_id": d.get("article_id"),
+            "title": d.get("title"),
+            "author": d.get("author"),
+            "published_at": d.get("published_at"),
+            "snippet": d.get("snippet"),
+            "vec_score": float(d.get("_score_vec", 0.0)),
+            "bm25_score": 0.0
+        }
+    for d in ft_docs:
+        if d["_id"] in by_id:
+            by_id[d["_id"]]["bm25_score"] = float(d.get("_score_ft", 0.0))
+        else:
+            by_id[d["_id"]] = {
+                "id": d["_id"],
+                "type": "chunk",
+                "article_id": d.get("article_id"),
+                "title": d.get("title"),
+                "author": d.get("author"),
+                "published_at": d.get("published_at"),
+                "snippet": d.get("snippet"),
+                "vec_score": 0.0,
+                "bm25_score": float(d.get("_score_ft", 0.0))
+            }
+
+    # --- 4) materialize final candidates (limit by FUSION_LIMIT) ---
+    candidates = []
+    for _id, fused_score in fused_pairs[:FUSION_LIMIT]:
+        base = by_id.get(_id, {"id": _id, "type": "chunk"})
+        cand = {
+            **base,
+            "fused_score": float(fused_score),
+            "score": float(fused_score)  # downstream code reads 'score'
+        }
+        candidates.append(cand)
+
+    state.candidates = candidates
     return state
+
 
 # ======================
 # CROSS-ENCODER RERANK (chunk-level)
