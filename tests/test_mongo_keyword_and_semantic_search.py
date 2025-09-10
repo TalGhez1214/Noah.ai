@@ -20,7 +20,7 @@ from pymongo import MongoClient
 
 # ====== CHANGE THIS import to your module ======
 # Example: import retrieval_pipeline as M
-import rag.rag_piplines.articles_rag_retriever_mongo_based as M  # <-- replace with your module name
+import rag.rag_piplines.articles_finder_graph as M  # <-- replace with your module name
 
 
 # ---------- Fixtures ----------

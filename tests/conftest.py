@@ -1,5 +1,23 @@
+# tests/conftest.py
+import os
+import sys
+import pathlib
 import types
 import pytest
+
+# --- Make project packages importable (fixes: ModuleNotFoundError: 'rag', 'agents') ---
+HERE = pathlib.Path(__file__).resolve().parent
+ROOT = HERE.parent                    # e.g., C:\work\Noah.ai
+SRC  = ROOT / "src"                   # optional, if you use a src/ layout
+
+# Prepend existing directories so Python finds your top-level packages
+for p in (ROOT, SRC):
+    if p.exists():
+        sp = str(p)
+        if sp not in sys.path:
+            sys.path.insert(0, sp)
+
+# --------------------------------------------------------------------------------------
 
 class FakeRetriever:
     """Mimics your RAGRetriever.retrieve() signature and return format."""
@@ -35,8 +53,7 @@ def stub_chain_run(monkeypatch):
         q = kwargs.get("question", "")
         ctx = kwargs.get("context", "").replace("\n", " ")[:120]
         return f"[LLMStub] q={q!r} ctx~={ctx!r}"
-    import langchain
-    # Patch only for our tests; identify LLMChain class by import path
+
     from langchain.chains import LLMChain
     monkeypatch.setattr(LLMChain, "run", _stub_chain_run, raising=True)
     return True

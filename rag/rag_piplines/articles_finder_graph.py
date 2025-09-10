@@ -40,6 +40,9 @@ from sentence_transformers import CrossEncoder
 import numpy as np
 from openai import OpenAI
 
+# prompts
+from rag.rag_piplines.prompts import make_analyzer_system_prompt
+
 # ======================
 # CONFIG
 # ======================
@@ -205,13 +208,15 @@ def analyze_and_extract(state: SearchState) -> SearchState:
     """
     structured_llm = LLM.with_structured_output(Extraction)
     transcript = _messages_to_text(state.messages)
+    system_prompt = make_analyzer_system_prompt()
     prompt = [
-        ("system", ANALYZE_SYSTEM),
+        ("system", system_prompt),
         ("human",
          f"Conversation so far:\n{transcript}\n\n"
          f"Latest user query:\n{state.user_query}\n\n"
          "If a field is unknown or you're not sure, set it to null. Do not fabricate values.")
     ]
+
     try:
         result: Extraction = structured_llm.invoke(prompt)
     except ValidationError:
