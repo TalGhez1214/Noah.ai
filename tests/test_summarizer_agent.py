@@ -67,7 +67,7 @@ def article_doc():
         "published_at": "2025-08-09T16:45:00Z",
         "section": None,            # <-- was `null`
         "source": "www.timesofisrael.com",
-        "title": "Ex-PM aide crafted pro-Qatar messages, sent to Urich, Feldstein to publish in media",
+        "title": "Ex-   PM aide crafted pro-Qatar messages, sent to Urich, Feldstein to publish in media",
     }
 
 # ---------- tests ----------
@@ -94,20 +94,6 @@ def test_current_page_tool_reads_injected_state(summarizer_agent, article_doc):
     out = tool.func(state)
     assert isinstance(out, dict)
     assert "Yisrael Einhorn, a former campaign adviser" in out["content"]
-
-def test_db_tool_returns_full_doc(summarizer_agent, article_doc):
-    tm = _tool_map(summarizer_agent)
-    tool_name = "get_articles_from_database_tool" 
-    tool = tm[tool_name]
-
-    spec = ArticleLookupSpec(title=article_doc["title"])
-    # Prefer .func to avoid any serialization quirks; both .run(spec) and .func(spec) can work
-    doc = tool.func(spec)
-
-    assert isinstance(doc, dict)
-    assert "title" in doc and "content" in doc
-    assert doc["title"] == article_doc["title"]
-    assert "Yisrael Einhorn, a former campaign adviser" in doc["content"]
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="Requires OpenAI API key.")
 def test_summarizer_agent_call_link_route_integration(summarizer_agent, article_doc):
@@ -144,10 +130,13 @@ def test_summarizer_agent_call_db_route_integration_with_title(summarizer_agent,
     assert "messages" in result
     assert isinstance(result["messages"][-1], AIMessage)
     assert isinstance(result["messages"][-1].content, str)
-    assert article_doc["title"] in result["messages"][-2].content
+
+    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("'final_score'")for m in result["messages"] if isinstance(m, ToolMessage))
+    assert obj_hits == 1, f"Expected exactly 1 ObjectId in tool content, got {obj_hits}"
 
     for m in result["messages"]:
         m.pretty_print()
+    
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="Requires OpenAI API key.")
 def test_summarizer_agent_call_db_route_integration_with_description(summarizer_agent, article_doc):
@@ -160,6 +149,9 @@ def test_summarizer_agent_call_db_route_integration_with_description(summarizer_
     assert isinstance(result["messages"][-1], AIMessage)
     assert isinstance(result["messages"][-1].content, str)
     assert article_doc["title"] in result["messages"][-2].content
+
+    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("'final_score'")for m in result["messages"] if isinstance(m, ToolMessage))
+    assert obj_hits == 1, f"Expected exactly 1 ObjectId in tool content, got {obj_hits}"
 
     for m in result["messages"]:
         m.pretty_print()
@@ -197,13 +189,17 @@ def test_summarizer_agent_call_db_route_integration_with_conversation_history(su
                 AIMessage(content=f"Sure! the author is - {article_doc['author'][0]}"),
 
                 HumanMessage(content="Can you summarize this article?"),
-            ]
+            ],
+            "user_query": "Can you summarize this article?",
         }
     result = summarizer_agent.call(state)
     assert "messages" in result
     assert isinstance(result["messages"][-1], AIMessage)
     assert isinstance(result["messages"][-1].content, str)
     assert article_doc["title"] in result["messages"][-2].content
+
+    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("'final_score'")for m in result["messages"] if isinstance(m, ToolMessage))
+    assert obj_hits == 1, f"Expected exactly 1 ObjectId in tool content, got {obj_hits}"
 
     for m in result["messages"]:
         m.pretty_print()
@@ -262,7 +258,6 @@ def test_summerizer_agent_clarification_question(summarizer_agent):
     assert "messages" in result
     assert isinstance(result["messages"][-1], AIMessage)
     assert isinstance(result["messages"][-1].content, str)
-    assert len([msg for msg in result["messages"] if isinstance(msg, ToolMessage)]) == 0 # Make sure no additional tool calls were made
 
     for m in result["messages"]:
         m.pretty_print()

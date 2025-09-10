@@ -192,7 +192,7 @@ def _messages_to_text(messages: List[BaseMessage]) -> str:
     def tag(m: BaseMessage) -> str:
         if isinstance(m, HumanMessage): return "User"
         if isinstance(m, AIMessage): return "Assistant"
-        if isinstance(m, ToolMessage): return f"Tool({getattr(m, 'name', 'tool')})"
+        if isinstance(m, ToolMessage): return f"Tool"
         if isinstance(m, SystemMessage): return "System"
         return m.__class__.__name__
     return "\n".join(f"{tag(m)}: {m.content if isinstance(m.content, str) else str(m.content)}" for m in messages)

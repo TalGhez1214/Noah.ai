@@ -9,6 +9,9 @@ from .base import BaseSubAgent
 from typing_extensions import Annotated
 from agents.manager_agent.GraphStates import ReactAgentState
 
+# ---- import search graph module ----
+import rag.rag_piplines.articles_finder_graph as M
+
 URL_RE = re.compile(r"https?://\S+")
 
 def _extract_first_url(text: str) -> Optional[str]:
@@ -87,7 +90,7 @@ class SummarizerSubAgent(BaseSubAgent):
             state: Annotated[dict, InjectedState]  # injected automatically by LangGraph
         ) -> str:
             try:
-                doc = state.get("   ")
+                doc = state.get("current_page", {}) or {}
                 return doc
             except Exception:
                 return {}
@@ -95,54 +98,26 @@ class SummarizerSubAgent(BaseSubAgent):
         @tool(
             "get_articles_from_database_tool",
             description=(
-                "Retrieve a single article document using a structured query with optional fields: "
-                "title, description (short), author. The result is a JSON object with fields like title, content, author, etc. "
-                "Use this when the user asks to summarize an article based on a previous message or known article."
+                "Retrieve a single article document from the database using the Search Graph. "
+                "Returns the top ranked article (title, author, content, url, etc.), or {} if none."
             ),
         )
-        def get_articles_from_database_tool(spec: ArticleLookupSpec) -> dict:
-            title_q = (spec.title or "").strip()
-            desc_q  = (spec.article_content or "").strip()
-            auth_q  = (spec.author or "").strip()
+        def get_articles_from_database_tool(
+            state: Annotated[dict, InjectedState],  # injected automatically by LangGraph
+        ) -> dict:
+            # 🔧 Force this agent’s default to 1 (must be done BEFORE build_graph)
+            M.REQUESTED_K_DEFAULT = 1
+            # Compile the graph and run it with whatever the agent already has
+            app = M.build_graph()
 
-            # ---------- (A) Mongo exact match ----------
-            if self.mongo_articles_collection is not None and (title_q or auth_q):
-                try:
-                    exact_filter = {}
-                    if title_q:
-                        exact_filter["title"] = {"$regex": f"^{re.escape(title_q)}$", "$options": "i"}
-                    if auth_q:
-                        exact_filter["author"] = {"$regex": f"^{re.escape(auth_q)}$", "$options": "i"}
-                    if exact_filter:
-                        doc = self.mongo_articles_collection.find_one(exact_filter, projection={"_id": 0})
-                        if doc and doc.get("content", "").strip():
-                            return doc  # return full document (title, content, etc.)
-                except Exception:
-                    pass
-
-            # ---------- (B) Retriever fallback ----------
-            parts = []
-            if title_q:
-                parts.append(f"title: {title_q}")
-            if auth_q:
-                parts.append(f"author: {auth_q}")
-            if desc_q:
-                parts.append(f"desc: {desc_q}")
-            composite_query = " | ".join(parts) if parts else (title_q or desc_q or auth_q)
-            if not composite_query:
-                return {}
-
-            try:
-                hits = self.retriever.retrieve(
-                    query=composite_query,
-                    semantic_file="full_content",
-                    k_final_matches=3,
-                )
-                if not hits:
-                    return {}
-                return hits[0]  # full hit object (should include content, title, etc.)
-            except Exception:
-                return {}
+            initial = {
+                "messages": state.get("messages", []),
+                "user_query": state.get("user_query", "") or ""
+            }
+            out: Dict[str, Any] = app.invoke(initial)
+            top_results = out.get("top_results", []) or []
+            # Return just the best article (empty dict if nothing found)
+            return top_results if top_results else {}
             
         self.tools = [
                         summary_content_from_link_tool,
