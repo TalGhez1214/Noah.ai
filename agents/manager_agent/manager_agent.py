@@ -15,7 +15,10 @@ from agents.sub_agents.summarizer import SummarizerSubAgent
 from agents.sub_agents.articles_finder import ArticalFinderSubAgent
 from agents.sub_agents.fallback import FallbackSubAgent
 
-from rag.rag_piplines.rag_retriever import RAGRetriever
+
+# ---- import search graph module ----
+import rag.rag_piplines.articles_finder_graph as M
+
 from typing import Optional
 from typing import Annotated
 from langchain_core.tools import tool, InjectedToolCallId
@@ -35,17 +38,17 @@ class ManagerAgent:
     def __init__(self, model: str = "gpt-4o-mini", user_query: str = "", user_id: Optional[str] = None, current_page: Optional[dict] = None):
         self.user_query = user_query
         self.user_id = user_id
-        self.retriever = RAGRetriever()
+        self.retriever = M.build_graph()
         self.current_page = current_page
 
         
         ## Available sub-agents ##
-        self.qa_agent = QASubAgent(retriever=self.retriever, model=model, prompt=QA_PROMPT)
+        #self.qa_agent = QASubAgent(retriever=self.retriever, model=model, prompt=QA_PROMPT)
         self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=model, prompt=SUMMARY_PROMPT)
         self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=article_finder_prompt)
         self.fallback_agent = FallbackSubAgent(model=model, prompt=fallback_agent_prompt)
 
-        self._agents = [self.qa_agent, 
+        self._agents = [
                         self.article_summary_agent, 
                         self.articles_finder_agent, 
                         self.fallback_agent
@@ -65,13 +68,13 @@ class ManagerAgent:
         ## LangGraph build ##
         graph = StateGraph(GraphState)
         graph.add_node(self._supervisor_agent)
-        graph.add_node(self.qa_agent.name, self.qa_agent.call)
+        #graph.add_node(self.qa_agent.name, self.qa_agent.call)
         graph.add_node(self.article_summary_agent.name, self.article_summary_agent.call)
         graph.add_node(self.articles_finder_agent.name, self.articles_finder_agent.call)
         graph.add_node(self.fallback_agent.name, self.fallback_agent.call)
 
         graph.add_edge(START, "supervisor")
-        graph.add_edge(self.qa_agent.name, END)
+        #graph.add_edge(self.qa_agent.name, END)
         graph.add_edge(self.article_summary_agent.name, END)
         graph.add_edge(self.articles_finder_agent.name, END)
         graph.add_edge(self.fallback_agent.name, END)

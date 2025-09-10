@@ -20,22 +20,6 @@ def _extract_first_url(text: str) -> Optional[str]:
     m = URL_RE.search(text)
     return m.group(0) if m else None
 
-# ---------- Structured input for the DB/title tool ----------
-class ArticleLookupSpec(BaseModel):
-    title: Optional[str] = Field(
-        default=None,
-        description="Exact or near-exact title of the article, if known."
-    )
-    article_content: Optional[str] = Field(
-        default=None,
-        description="any relevant lines and content from the artical or if avaiable a description the user provided."
-    )
-    author: Optional[str] = Field(
-        default=None,
-        description="Author's name, if known."
-    )
-
-
 class SummarizerSubAgent(BaseSubAgent):
     def __init__(
         self,
@@ -107,14 +91,12 @@ class SummarizerSubAgent(BaseSubAgent):
         ) -> dict:
             # 🔧 Force this agent’s default to 1 (must be done BEFORE build_graph)
             M.REQUESTED_K_DEFAULT = 1
-            # Compile the graph and run it with whatever the agent already has
-            app = M.build_graph()
 
             initial = {
                 "messages": state.get("messages", []),
                 "user_query": state.get("user_query", "") or ""
             }
-            out: Dict[str, Any] = app.invoke(initial)
+            out: Dict[str, Any] = self.retriever.invoke(initial)
             top_results = out.get("top_results", []) or []
             # Return just the best article (empty dict if nothing found)
             return top_results if top_results else {}

@@ -4,8 +4,8 @@ from langchain_openai import ChatOpenAI
 from langchain.prompts import PromptTemplate
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
 from agents.prompts import article_finder_prompt
-from rag.rag_piplines.rag_retriever import RAGRetriever
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from rag.rag_piplines.articles_finder_graph import build_graph
 
 @pytest.fixture
 def rag_retriever():
@@ -16,7 +16,7 @@ def rag_retriever():
         RAGRetriever: An instance of the RAGRetriever class.
     """
     base_path = "./rag/data_indexing/indexes_and_metadata_files"
-    return RAGRetriever(base_path)
+    return build_graph()
 
 @pytest.fixture
 def user_query():
@@ -54,13 +54,6 @@ def test_structured_output_error_handling(rag_retriever):
     output = agent.structured_output(llm_output)
     assert output["Summary"] == "Invalid output"
     assert output["Key Quote"] == "Invalid output"
-
-
-# Test the get_knowledge_for_answer method
-def test_get_knowledge_for_answer(rag_retriever, user_query):
-    agent = ArticalFinderSubAgent(retriever=rag_retriever, model="gpt-4o-mini", prompt=article_finder_prompt)
-    knowledge = agent.get_knowledge_for_answer(user_query)
-    assert len(knowledge) == 3
 
 def test_agent_answers(rag_retriever, user_query):
     agent = ArticalFinderSubAgent(retriever=rag_retriever, model="gpt-4o-mini", prompt=article_finder_prompt)

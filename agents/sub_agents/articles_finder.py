@@ -54,17 +54,7 @@ class ArticalFinderSubAgent(BaseSubAgent):
             A plain text string containing ONLY the concatenated 'chunk' fields
             from the top retrieved snippets
         """
-        try:
-            hits = self.retriever.retrieve(
-                query=user_query,
-                semantic_file="full_content",  
-                keywords_fields=["title", "author", "content"], 
-                k_final_matches=3
-            )
-        except Exception as e:
-            return f"Error retrieving knowledge: {e}"
-
-        return hits
+        return ""
 
     def structured_output(self, llm_output: str):
         """
@@ -100,7 +90,11 @@ class ArticalFinderSubAgent(BaseSubAgent):
             "Key Quote": "Key Quote from the article",
         }
         """
-        articles = self.get_knowledge_for_answer(user_query=state["user_query"])
+        retrieve_state = {
+            "messages": state.get("messages", []),
+            "user_query": state.get("user_query", ""),
+        }
+        articles = self.retriever.invoke(retrieve_state).get("top_results", [])
         articles_snippets = []
 
         for article in articles:

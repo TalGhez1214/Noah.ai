@@ -409,6 +409,7 @@ def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
             "title": 1,
             "author": 1,
             "published_at": 1,
+            "url": 1,
             "snippet": "$content_chunk",
             "_score_vec": 1
         }},
@@ -441,6 +442,7 @@ def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
             "article_id": 1,
             "title": 1,
             "author": 1,
+            "url": 1,
             "published_at": 1,
             "snippet": "$content_chunk",
             "_score_ft": 1
@@ -474,6 +476,7 @@ def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
             "title": d.get("title"),
             "author": d.get("author"),
             "published_at": d.get("published_at"),
+            "url": d.get("url"),
             "snippet": d.get("snippet"),
             "vec_score": float(d.get("_score_vec", 0.0)),
             "bm25_score": 0.0
@@ -489,6 +492,7 @@ def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
                 "title": d.get("title"),
                 "author": d.get("author"),
                 "published_at": d.get("published_at"),
+                "url": d.get("url"),
                 "snippet": d.get("snippet"),
                 "vec_score": 0.0,
                 "bm25_score": float(d.get("_score_ft", 0.0))
@@ -604,6 +608,7 @@ def chunks_to_articles(state: SearchState) -> SearchState:
             "author": 1,
             "title": 1,
             "published_at": 1,
+            "url": 1,
             "content_chunk": 1
         }},
 

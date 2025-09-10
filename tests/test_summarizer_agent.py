@@ -3,12 +3,11 @@ import os
 import re
 import pytest
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-from rag.rag_piplines.rag_retriever import RAGRetriever
-from agents.sub_agents.summarizer import SummarizerSubAgent, ArticleLookupSpec
+from agents.sub_agents.summarizer import SummarizerSubAgent
 from agents.prompts import SUMMARY_PROMPT
 from dotenv import load_dotenv
 from pymongo import MongoClient
-
+import rag.rag_piplines.articles_finder_graph as M
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGODB_URI")
@@ -19,13 +18,6 @@ def _tool_map(agent):
     # Use the exposed list from the sub-agent, not the compiled graph
     return {t.name: t for t in getattr(agent, "tools", [])}
 
-@pytest.fixture
-def rag_retriever():
-    """
-    Fixture to create a RAGRetriever instance.
-    """
-    base_path = "./rag/data_indexing/indexes_and_metadata_files"
-    return RAGRetriever(base_path)
 
 @pytest.fixture
 def mongo_collection():
@@ -38,10 +30,10 @@ def mongo_collection():
     client.close()
 
 @pytest.fixture
-def summarizer_agent(mongo_collection, rag_retriever):
+def summarizer_agent(mongo_collection):
     from agents.sub_agents.summarizer import SummarizerSubAgent
     return SummarizerSubAgent(
-        retriever=rag_retriever,
+        retriever=M.build_graph(),
         model="gpt-4o-mini",
         prompt=SUMMARY_PROMPT,
         mongo_articles_collection=mongo_collection,
