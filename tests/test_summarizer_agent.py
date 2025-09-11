@@ -123,7 +123,7 @@ def test_summarizer_agent_call_db_route_integration_with_title(summarizer_agent,
     assert isinstance(result["messages"][-1], AIMessage)
     assert isinstance(result["messages"][-1].content, str)
 
-    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("'final_score'")for m in result["messages"] if isinstance(m, ToolMessage))
+    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("final_score")for m in result["messages"] if isinstance(m, ToolMessage))
     assert obj_hits == 1, f"Expected exactly 1 ObjectId in tool content, got {obj_hits}"
 
     for m in result["messages"]:
@@ -142,7 +142,7 @@ def test_summarizer_agent_call_db_route_integration_with_description(summarizer_
     assert isinstance(result["messages"][-1].content, str)
     assert article_doc["title"] in result["messages"][-2].content
 
-    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("'final_score'")for m in result["messages"] if isinstance(m, ToolMessage))
+    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("final_score")for m in result["messages"] if isinstance(m, ToolMessage))
     assert obj_hits == 1, f"Expected exactly 1 ObjectId in tool content, got {obj_hits}"
 
     for m in result["messages"]:
@@ -190,7 +190,7 @@ def test_summarizer_agent_call_db_route_integration_with_conversation_history(su
     assert isinstance(result["messages"][-1].content, str)
     assert article_doc["title"] in result["messages"][-2].content
 
-    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("'final_score'")for m in result["messages"] if isinstance(m, ToolMessage))
+    obj_hits = sum((m.content if isinstance(m.content, str) else str(m.content)).count("final_score")for m in result["messages"] if isinstance(m, ToolMessage))
     assert obj_hits == 1, f"Expected exactly 1 ObjectId in tool content, got {obj_hits}"
 
     for m in result["messages"]:
@@ -253,3 +253,6 @@ def test_summerizer_agent_clarification_question(summarizer_agent):
 
     for m in result["messages"]:
         m.pretty_print()
+
+
+

@@ -3,6 +3,7 @@ from datetime import datetime
 import math
 import os
 from urllib.parse import urlparse
+from datetime import datetime, date, timezone
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -54,14 +55,14 @@ col = db[MONGO_COLLECTION]
 class MongoArticle(BaseModel):
     # Store _id as a string in the model (and coerce in a validator)
     id: str = Field(alias="_id")
-    url: str
-    author: List[str]
-    content: str
+    url: str = ""
+    author: List[str] = Field(default_factory=list)
+    content: str = ""
     fetched_at: Optional[str] = None
     published_at: Optional[str] = None
     section: Optional[str] = None
     source: Optional[str] = None
-    title: str
+    title: str = ""
     topic: Optional[str] = None
     readingTime: Optional[str] = None  # e.g., "6 min"
     coverImage: Optional[str] = None
@@ -110,7 +111,15 @@ def _estimate_reading_minutes(text: str) -> int:
 
 
 def _to_ui_article(doc: Dict[str, Any]) -> UIArticle:
-    m = MongoArticle(**doc)
+    d = dict(doc)
+    for k in ("published_at", "fetched_at"):
+        v = d.get(k)
+        if isinstance(v, datetime):
+            d[k] = (v if v.tzinfo else v.replace(tzinfo=timezone.utc)).isoformat()
+        elif isinstance(v, date):
+            d[k] = datetime(v.year, v.month, v.day, tzinfo=timezone.utc).isoformat()
+
+    m = MongoArticle(**d)
 
     slug_val = slugify(m.title) if m.title else str(m.id)
 

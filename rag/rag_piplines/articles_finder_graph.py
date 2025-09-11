@@ -11,7 +11,7 @@ Flow:
      - if should_use_ce(state): rerank_with_ce (Cross-Encoder) 
      - else: route by file_type → chunks_to_articles | apply_recency_rerank
 6) chunks_to_articles*         -> collapse chunks → articles (best chunk wins) when file_type="article"
-7) apply_recency_rerank               -> generic recency blend (works for chunks or articles) → final top_k
+7) apply_recency_rerank        -> generic recency blend (works for chunks or articles) → final top_k
 
 Strong defaults:
 - Fusion weights: vector search 0.6 / Keyword (BM25) 0.4
@@ -31,7 +31,7 @@ from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, ToolMe
 from langchain_openai import ChatOpenAI
 
 # Structured output
-from pydantic import BaseModel, Field, ValidationError, field_validator, ConfigDict
+from pydantic import BaseModel, Field, ValidationError, field_validator
 from typing import Optional as Opt, List as Lst
 
 # Mongo / Embeddings / Reranker
@@ -39,6 +39,7 @@ from pymongo import MongoClient
 from sentence_transformers import CrossEncoder
 import numpy as np
 from openai import OpenAI
+from bson import ObjectId  # <-- NEW: for converting back during $match
 
 # prompts
 from rag.rag_piplines.prompts import make_analyzer_system_prompt
@@ -53,10 +54,10 @@ CHUNKS_COL    = os.getenv("CHUNKS_COL", "article_chunks")
 ARTICLES_COL  = os.getenv("ARTICLES_COL", "articles")
 
 # Atlas Search config
-FULLTEXT_INDEX = os.getenv("FULLTEXT_INDEX", "article_search")                  # full-text over chunks
-CHUNKTEXT_INDEX = os.getenv("CHUNKTEXT_INDEX", "chunk_search")                  # full-text over chunks
-VECTOR_INDEX   = os.getenv("VECTOR_INDEX",   "article_chuncks_vector_search")   # vector index over chunks
-VECTOR_PATH    = os.getenv("VECTOR_PATH",    "dense_vector")                    # vector field on chunks
+FULLTEXT_INDEX  = os.getenv("FULLTEXT_INDEX", "article_search")
+CHUNKTEXT_INDEX = os.getenv("CHUNKTEXT_INDEX", "chunk_search")
+VECTOR_INDEX    = os.getenv("VECTOR_INDEX",   "article_chuncks_vector_search")
+VECTOR_PATH     = os.getenv("VECTOR_PATH",    "dense_vector")
 
 # Defaults
 DEFAULT_FILE_TYPE           = os.getenv("DEFAULT_FILE_TYPE", "article")  # "article" or "chunk"
@@ -73,11 +74,11 @@ FUSION_LIMIT                = int(os.getenv("FUSION_LIMIT", "480"))
 USE_CROSS_ENCODER           = os.getenv("USE_CROSS_ENCODER", "1") not in ("0", "false", "False")
 CROSS_ENCODER_MODEL         = os.getenv("CROSS_ENCODER_MODEL", "BAAI/bge-reranker-large")
 CE_WEIGHT                   = float(os.getenv("CE_WEIGHT", "0.7"))
-CE_TOP_N                    = int(os.getenv("CE_TOP_N", "120"))   # max chunk candidates to rerank
+CE_TOP_N                    = int(os.getenv("CE_TOP_N", "120"))
 
-# Gating knobs (to skip CE when unlikely to help)
-CE_MIN_CANDIDATES           = int(os.getenv("CE_MIN_CANDIDATES", "40"))   # min candidates needed to justify CE
-CE_MARGIN_SKIP              = float(os.getenv("CE_MARGIN_SKIP", "0.25"))  # if top1 is this much above top2 (normalized), skip CE
+# Gating knobs
+CE_MIN_CANDIDATES           = int(os.getenv("CE_MIN_CANDIDATES", "40"))
+CE_MARGIN_SKIP              = float(os.getenv("CE_MARGIN_SKIP", "0.25"))
 
 # Recency
 RECENCY_HALF_LIFE_DAYS           = float(os.getenv("RECENCY_HALF_LIFE_DAYS", "45"))
@@ -95,19 +96,18 @@ OPENAI_EMBED_MODEL  = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-large") 
 class SearchState:
     messages: List[BaseMessage]
     user_query: str
-    file_type: str = DEFAULT_FILE_TYPE                   # "article" or "chunk"
+    file_type: str = DEFAULT_FILE_TYPE
     # extracted
     filters: Dict[str, Any] = field(default_factory=dict)     # {"author":[...], "from":"YYYY-MM-DD", "to":"YYYY-MM-DD"}
     lexical_keywords: List[str] = field(default_factory=list)
-    lexical_query: str = field(default="")  # built in build_queries()
+    lexical_query: str = field(default="")
     semantic_query: str = ""
     requested_k: Optional[int] = None
     filter_warnings: List[str] = field(default_factory=list)
     # retrieval candidates (before recency)
-    candidates: List[Dict[str, Any]] = field(default_factory=list)   # chunks or articles; each has "score"
+    candidates: List[Dict[str, Any]] = field(default_factory=list)
     # final output
     top_results: List[Dict[str, Any]] = field(default_factory=list)
-
 
 # ======================
 # MODELS
@@ -115,7 +115,7 @@ class SearchState:
 
 LLM = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-CE  = CrossEncoder(CROSS_ENCODER_MODEL) if USE_CROSS_ENCODER else None # TODO: Consider other models
+CE  = CrossEncoder(CROSS_ENCODER_MODEL) if USE_CROSS_ENCODER else None
 
 def _l2norm(v):
     v = np.array(v, dtype=float)
@@ -123,10 +123,45 @@ def _l2norm(v):
     return (v / (n + 1e-12)).tolist()
 
 def embed_query(text: str) -> list[float]:
-    # No "query: " prefix needed for OpenAI embeddings
     resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=[text])
     return _l2norm(resp.data[0].embedding)
 
+# ======================
+# SAFE SERIALIZATION HELPERS  (NEW)
+# ======================
+
+def ensure_utc_aware(dt_or_str):
+    """Coerce DB/string datetimes to tz-aware UTC; assume UTC if missing tzinfo."""
+    if dt_or_str is None:
+        return None
+    if isinstance(dt_or_str, str):
+        try:
+            dt = datetime.fromisoformat(dt_or_str)
+        except ValueError:
+            return None
+    else:
+        dt = dt_or_str
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+
+def _to_iso(dt) -> Optional[str]:
+    """Coerce datetime/str/None -> ISO8601 string or None."""
+    if dt is None:
+        return None
+    if isinstance(dt, str):
+        return dt
+    try:
+        return ensure_utc_aware(dt).isoformat()
+    except Exception:
+        return str(dt)
+
+def _sid(x) -> Optional[str]:
+    """Safe string id (ObjectId -> str)."""
+    if x is None:
+        return None
+    try:
+        return str(x)
+    except Exception:
+        return None
 
 # ======================
 # SCHEMA-ENFORCED EXTRACTION (+ robust fallback)
@@ -188,24 +223,15 @@ ANALYZE_SYSTEM = (
 )
 
 def _messages_to_text(messages: List[BaseMessage]) -> str:
-    """Deterministic transcript including tool calls; avoids provider-specific role quirks."""
     def tag(m: BaseMessage) -> str:
         if isinstance(m, HumanMessage): return "User"
         if isinstance(m, AIMessage): return "Assistant"
-        if isinstance(m, ToolMessage): return f"Tool"
+        if isinstance(m, ToolMessage): return "Tool"
         if isinstance(m, SystemMessage): return "System"
         return m.__class__.__name__
     return "\n".join(f"{tag(m)}: {m.content if isinstance(m.content, str) else str(m.content)}" for m in messages)
 
 def analyze_and_extract(state: SearchState) -> SearchState:
-    """
-    This function analyzes the conversation history and extracts:
-    - Explicit filters (author names, timeframe)
-    - Lexical keywords (entities, keyphrases)
-    - Semantic query (reuse user query if already clear)
-    - Requested_k (if user asked for a specific number of results)
-    If extraction or parsing fails, it falls back to safe defaults.
-    """
     structured_llm = LLM.with_structured_output(Extraction)
     transcript = _messages_to_text(state.messages)
     system_prompt = make_analyzer_system_prompt()
@@ -235,16 +261,11 @@ def analyze_and_extract(state: SearchState) -> SearchState:
     state.requested_k = result.requested_k
     return state
 
-
 # ======================
 # VALIDATE FILTERS (on CHUNK level)
 # ======================
 
 def _parse_iso_date(s: Optional[str]) -> Optional[datetime]:
-    """
-    This helper attempts to parse an ISO date string (YYYY-MM-DD) into a datetime object
-    for valid MongoDB queries. Returns None if parsing fails.
-    """
     if not s: return None
     try:
         return datetime.fromisoformat(s)
@@ -252,11 +273,9 @@ def _parse_iso_date(s: Optional[str]) -> Optional[datetime]:
         return None
 
 def validate_filters(state: SearchState) -> SearchState:
-    # make client tz-aware so datetimes from Mongo are UTC-aware
     client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc); db = client[DB_NAME]
     warnings: List[str] = []
 
-    # Authors must exist on CHUNKS
     authors = state.filters.get("author") or []
     if authors:
         existing = set(db[CHUNKS_COL].distinct("author", {"author": {"$in": authors}}))
@@ -265,7 +284,6 @@ def validate_filters(state: SearchState) -> SearchState:
             warnings.append("Author filter removed (no matches on chunks).")
         state.filters["author"] = valid
 
-    # Dates must parse; swap if from>to
     d_from = _parse_iso_date(state.filters.get("from"))
     d_to   = _parse_iso_date(state.filters.get("to"))
     if state.filters.get("from") and not d_from:
@@ -282,7 +300,6 @@ def validate_filters(state: SearchState) -> SearchState:
     state.filter_warnings = warnings
     return state
 
-
 # ======================
 # BUILD QUERIES
 # ======================
@@ -291,51 +308,32 @@ def build_lexical_query(state: SearchState):
     return " ".join(state.lexical_keywords) if state.lexical_keywords else state.user_query
 
 # ======================
-# TZ-AWARE DATETIME HELPERS  
+# TZ HELPERS FOR FILTERS
 # ======================
 
-def ensure_utc_aware(dt_or_str):
-    """Coerce DB/string datetimes to tz-aware UTC; assume UTC if missing tzinfo."""
-    if dt_or_str is None:
-        return None
-    if isinstance(dt_or_str, str):
-        try:
-            dt = datetime.fromisoformat(dt_or_str)
-        except ValueError:
-            return None
-    else:
-        dt = dt_or_str
-    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
-
 def parse_date_start_utc(date_str: str) -> datetime:
-    """YYYY-MM-DD → 00:00:00 UTC (tz-aware)."""
     d = datetime.fromisoformat(date_str).date()
     return datetime.combine(d, time.min, tzinfo=timezone.utc)
 
 def parse_date_end_utc_inclusive(date_str: str) -> datetime:
-    """YYYY-MM-DD → 23:59:59.999999 UTC (tz-aware)."""
     d = datetime.fromisoformat(date_str).date()
     return datetime.combine(d, time.max, tzinfo=timezone.utc)
 
-
 # ======================
-# HYBRID RETRIEVAL ($rankFusion) → CHUNK CANDIDATES
+# HYBRID RETRIEVAL (manual RRF)
 # ======================
 
 def _vector_filter_doc(filters: Dict[str, Any]) -> Dict[str, Any]:
-    """Builds a MongoDB filter document for vector search based on provided filters."""
     f: Dict[str, Any] = {}
     if filters.get("author"):
         f["author"] = {"$in": filters["author"]}
     rng = {}
-    # ✅ use tz-aware bounds
     if filters.get("from"): rng["$gte"] = parse_date_start_utc(filters["from"])
     if filters.get("to"):   rng["$lte"] = parse_date_end_utc_inclusive(filters["to"])
     if rng: f["published_at"] = rng
     return f
 
 def _search_filter_compound(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Builds a list of compound filter clauses for full-text search based on provided filters."""
     f = []
     if filters.get("author"):
         f.append({
@@ -345,24 +343,16 @@ def _search_filter_compound(filters: Dict[str, Any]) -> List[Dict[str, Any]]:
             }
         })
     rng = {}
-    # ✅ use tz-aware bounds
     if filters.get("from"): rng["gte"] = parse_date_start_utc(filters["from"])
     if filters.get("to"):   rng["lte"] = parse_date_end_utc_inclusive(filters["to"])
     if rng:
         f.append({"range": {"path": "published_at", **rng}})
     return f
 
-
 def _rrf_fuse(vec_docs, ft_docs, w_vec, w_ft, k):
-    """
-    Reciprocal Rank Fusion with weights:
-      score(d) = w_vec * 1/(k + rank_vec(d)) + w_ft * 1/(k + rank_ft(d))
-    If a doc is absent from a list, that term just doesn't contribute.
-    """
     r_vec = {d["_id"]: i for i, d in enumerate(vec_docs)}
     r_ft  = {d["_id"]: i for i, d in enumerate(ft_docs)}
     ids = set(r_vec) | set(r_ft)
-
     fused = []
     for _id in ids:
         s = 0.0
@@ -371,28 +361,20 @@ def _rrf_fuse(vec_docs, ft_docs, w_vec, w_ft, k):
         if _id in r_ft:
             s += w_ft * (1.0 / (k + r_ft[_id] + 1))
         fused.append((_id, s))
-
     fused.sort(key=lambda x: x[1], reverse=True)
     return fused
 
 def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
-    """
-    Manual hybrid fusion (RRF) for free tiers / clusters without $rankFusion:
-    - Run $vectorSearch and $search independently on CHUNKS
-    - Fuse with weighted RRF
-    - Shape candidates like the $rankFusion path
-    """
     client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc)
     db = client[DB_NAME]
     chunks = db[CHUNKS_COL]
 
-    # Build query parts
     qvec    = embed_query(state.semantic_query)
-    vfilter = _vector_filter_doc(state.filters)           # {'author': {'$in': ...}, 'published_at': {...}} if any
-    sfilter = _search_filter_compound(state.filters)      # [compound/equals, range, ...] for Atlas Search
-    state.lexical_query = build_lexical_query(state)      # join keywords or fallback to user_query
+    vfilter = _vector_filter_doc(state.filters)
+    sfilter = _search_filter_compound(state.filters)
+    state.lexical_query = build_lexical_query(state)
 
-    # --- 1) vector branch ---
+    # 1) vector branch
     vec_pipeline = [
         {"$vectorSearch": {
             "index": VECTOR_INDEX,
@@ -416,12 +398,12 @@ def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
         {"$limit": VEC_LIMIT}
     ]
 
-    # --- 2) full-text branch (BM25 on chunks) ---
+    # 2) full-text branch
     ft_pipeline = [
         {"$search": {
             "index": CHUNKTEXT_INDEX,
             "compound": {
-                "filter": sfilter,                     # author/date filters (if any)
+                "filter": sfilter,
                 "should": [
                     {"text": {
                         "path": ["title"],
@@ -457,25 +439,18 @@ def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
         state.candidates = []
         return state
 
-    # --- 3) fuse with RRF (weighted by your fusion weights) ---
-    fused_pairs = _rrf_fuse(
-        vec_docs,
-        ft_docs,
-        FUSION_WEIGHT_VECTOR,
-        FUSION_WEIGHT_TEXT,
-        RRF_K
-    )
+    fused_pairs = _rrf_fuse(vec_docs, ft_docs, FUSION_WEIGHT_VECTOR, FUSION_WEIGHT_TEXT, RRF_K)
 
-    # Build a lookup of doc fields (prefer vector copy if present; otherwise BM25 copy)
-    by_id = {}
+    # Build JSON-safe candidates -------------- (IDs -> str, dates -> ISO)
+    by_id: Dict[Any, Dict[str, Any]] = {}
     for d in vec_docs:
         by_id[d["_id"]] = {
-            "id": d["_id"],
+            "id": _sid(d["_id"]),
             "type": "chunk",
-            "article_id": d.get("article_id"),
+            "article_id": _sid(d.get("article_id")),
             "title": d.get("title"),
             "author": d.get("author"),
-            "published_at": d.get("published_at"),
+            "published_at": _to_iso(d.get("published_at")),
             "url": d.get("url"),
             "snippet": d.get("snippet"),
             "vec_score": float(d.get("_score_vec", 0.0)),
@@ -486,45 +461,41 @@ def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
             by_id[d["_id"]]["bm25_score"] = float(d.get("_score_ft", 0.0))
         else:
             by_id[d["_id"]] = {
-                "id": d["_id"],
+                "id": _sid(d["_id"]),
                 "type": "chunk",
-                "article_id": d.get("article_id"),
+                "article_id": _sid(d.get("article_id")),
                 "title": d.get("title"),
                 "author": d.get("author"),
-                "published_at": d.get("published_at"),
+                "published_at": _to_iso(d.get("published_at")),
                 "url": d.get("url"),
                 "snippet": d.get("snippet"),
                 "vec_score": 0.0,
                 "bm25_score": float(d.get("_score_ft", 0.0))
             }
 
-    # --- 4) materialize final candidates (limit by FUSION_LIMIT) ---
     candidates = []
     for _id, fused_score in fused_pairs[:FUSION_LIMIT]:
-        base = by_id.get(_id, {"id": _id, "type": "chunk"})
+        base = by_id.get(_id, {"id": _sid(_id), "type": "chunk"})
         cand = {
             **base,
             "fused_score": float(fused_score),
-            "score": float(fused_score)  # downstream code reads 'score'
+            "score": float(fused_score)
         }
         candidates.append(cand)
 
     state.candidates = candidates
     return state
 
-
 # ======================
-# CROSS-ENCODER RERANK (chunk-level)
+# CROSS-ENCODER RERANK
 # ======================
 
 def rerank_with_cross_encoder(state: SearchState) -> SearchState:
-    """Reranks the top candidates using a cross-encoder model."""
-    # If called, CE is enabled by gating. Still guard for safety.
     if CE is None or not state.candidates:
         return state
 
     K = state.requested_k or REQUESTED_K_DEFAULT
-    cap = min(max(K * 12, 60), CE_TOP_N)  # e.g., 60–120
+    cap = min(max(K * 12, 60), CE_TOP_N)
     cand = state.candidates[:cap]
 
     pairs = []
@@ -550,46 +521,37 @@ def rerank_with_cross_encoder(state: SearchState) -> SearchState:
         c["ce_score"] = float(ce_scores[i])
         c["norm_ce"] = float(n_ce[i])
         c["norm_fused"] = float(n_f[i])
-        c["score"] = float(final[i])  # overwrite base for downstream
+        c["score"] = float(final[i])
 
     cand.sort(key=lambda x: x["score"], reverse=True)
     state.candidates = cand + state.candidates[cap:]
     return state
 
 # ======================
-# CONDITIONAL: SHOULD WE USE CE?
+# CE GATING
 # ======================
 
 def _should_use_ce(state: SearchState) -> bool:
-    """Decides whether to use cross-encoder reranking based on state and config."""
     if not USE_CROSS_ENCODER or CE is None or not state.candidates:
         return False
-
-    # Not enough candidates to justify CE
     if len(state.candidates) < CE_MIN_CANDIDATES:
         return False
-
-    # If user asked for very small K and top-2 already have a big margin, skip CE
     try:
         K = state.requested_k or REQUESTED_K_DEFAULT
         s0 = float(state.candidates[0]["score"])
         s1 = float(state.candidates[1]["score"]) if len(state.candidates) > 1 else s0
-        margin = (s0 - s1) / (abs(s0) + 1e-9)  # normalize by top score
+        margin = (s0 - s1) / (abs(s0) + 1e-9)
         if K <= 2 and margin >= CE_MARGIN_SKIP:
             return False
     except Exception:
         pass
-
     return True
 
-
 # ======================
-# CONDITIONAL: CHUNK → ARTICLE
+# CHUNK → ARTICLE (JSON-safe)
 # ======================
 
 def chunks_to_articles(state: SearchState) -> SearchState:
-    """Collapse chunk candidates to unique articles by best chunk score,
-    and attach article metadata INCLUDING full `content`."""
     if not state.candidates:
         return state
 
@@ -597,11 +559,17 @@ def chunks_to_articles(state: SearchState) -> SearchState:
     db = client[DB_NAME]
     chunks = db[CHUNKS_COL]
 
-    pipeline = [
-        # Only fetch the chunk docs we already shortlisted
-        {"$match": {"_id": {"$in": [c["id"] for c in state.candidates]}}},
+    # Reconstruct ObjectIds for $match (state.candidates store string ids)
+    ids_str = [c.get("id") for c in state.candidates if c.get("id")]
+    ids_oid = []
+    for s in ids_str:
+        try:
+            ids_oid.append(ObjectId(s))
+        except Exception:
+            pass
 
-        # 1) PROJECT (on chunks): keep only the fields we need downstream
+    pipeline = [
+        {"$match": {"_id": {"$in": ids_oid}}},
         {"$project": {
             "_id": 1,
             "article_id": 1,
@@ -611,8 +579,6 @@ def chunks_to_articles(state: SearchState) -> SearchState:
             "url": 1,
             "content_chunk": 1
         }},
-
-        # Join parent article and fetch only necessary fields (including FULL content)
         {"$lookup": {
             "from": ARTICLES_COL,
             "let": {"aid": "$article_id"},
@@ -623,51 +589,43 @@ def chunks_to_articles(state: SearchState) -> SearchState:
                     "url": 1,
                     "author": 1,
                     "published_at": 1,
-                    "content": 1          # <-- bring full article content
+                    "content": 1
                 }}
             ],
             "as": "article"
         }},
         {"$unwind": "$article"},
-
-        # 2) PROJECT (shape final record we’ll use for collapsing & scoring)
         {"$project": {
             "_id": 1,
             "article_id": 1,
-
-            # chunk-side fields (for fallback + snippet)
             "content_chunk": 1,
-
-            # article-side fields
             "article_title": "$article.title",
             "article_url": "$article.url",
             "article_author": "$article.author",
             "article_published_at": "$article.published_at",
-            "article_content": "$article.content"   # <-- surfaced as a field
+            "article_content": "$article.content"
         }}
     ]
 
     docs = list(chunks.aggregate(pipeline))
     score_map = {c["id"]: c["score"] for c in state.candidates}
 
-    # Collapse chunks → articles by picking the chunk with max score per article
     best_by_article: Dict[Any, Dict[str, Any]] = {}
     for d in docs:
-        cid = d["_id"]
-        aid = d["article_id"]
+        cid = _sid(d["_id"])
+        aid = d["article_id"]  # still ObjectId here
         sc = float(score_map.get(cid, 0.0))
         cur = best_by_article.get(aid)
         if (cur is None) or (sc > cur["score"]):
-            # Take this chunk as best for the article (max score)
             best_by_article[aid] = {
-                "id": aid,
+                "id": _sid(aid),  # stringify article id
                 "type": "article",
                 "title": d.get("article_title") or d.get("chunk_title"),
                 "url": d.get("article_url"),
                 "author": d.get("article_author") or d.get("chunk_author"),
-                "published_at": d.get("article_published_at") or d.get("chunk_published_at"),
+                "published_at": _to_iso(d.get("article_published_at") or d.get("chunk_published_at")),
                 "snippet": d.get("content_chunk"),
-                "content": d.get("article_content"),  # <-- full content now present
+                "content": d.get("article_content"),
                 "score": sc
             }
 
@@ -695,11 +653,10 @@ def apply_recency(state: SearchState) -> SearchState:
     lo, hi = float(vals.min()), float(vals.max())
     den = (hi - lo) if hi > lo else 1.0
 
-    now = datetime.now(timezone.utc)   # ✅ tz-aware "now"
+    now = datetime.now(timezone.utc)
     out = []
     for c in cands:
         norm = (c["score"] - lo) / den if den > 0 else 0.5
-        # ✅ coerce published_at to tz-aware UTC (handles str or datetime)
         pub = ensure_utc_aware(c.get("published_at"))
         if pub:
             age_days = max((now - pub).days, 0)
@@ -713,9 +670,8 @@ def apply_recency(state: SearchState) -> SearchState:
     state.top_results = out[:K]
     return state
 
-
 # ======================
-# BUILD GRAPH (CE as a CONDITIONAL NODE)
+# BUILD GRAPH
 # ======================
 
 def build_graph():
@@ -725,13 +681,12 @@ def build_graph():
     g.add_node("hybrid_retrieve",    hybrid_retrieve_rankfusion)
     g.add_node("rerank_with_ce",     rerank_with_cross_encoder)
     g.add_node("chunks_to_articles", chunks_to_articles)
-    g.add_node("apply_recency_rerank",      apply_recency)
+    g.add_node("apply_recency_rerank", apply_recency)
 
     g.set_entry_point("analyze_and_extract")
     g.add_edge("analyze_and_extract", "validate_filters")
     g.add_edge("validate_filters",   "hybrid_retrieve")
 
-    # Conditional: after hybrid retrieval decide CE or skip + route by file_type
     def decide_next_after_retrieval(state: SearchState):
         if _should_use_ce(state):
             return "rerank_with_ce"
@@ -739,22 +694,20 @@ def build_graph():
         return "chunks_to_articles" if ft == "article" else "apply_recency_rerank"
 
     g.add_conditional_edges("hybrid_retrieve", decide_next_after_retrieval, {
-        "rerank_with_ce":    "rerank_with_ce",
-        "chunks_to_articles":"chunks_to_articles",
-        "apply_recency_rerank":     "apply_recency_rerank"
+        "rerank_with_ce":     "rerank_with_ce",
+        "chunks_to_articles": "chunks_to_articles",
+        "apply_recency_rerank":"apply_recency_rerank"
     })
 
-    # After CE (if taken), route again by file_type
     def route_after_ce(state: SearchState):
         ft = (state.file_type or DEFAULT_FILE_TYPE).strip().lower()
         return "chunks_to_articles" if ft == "article" else "apply_recency_rerank"
 
     g.add_conditional_edges("rerank_with_ce", route_after_ce, {
-        "chunks_to_articles":"chunks_to_articles",
-        "apply_recency_rerank":     "apply_recency_rerank"
+        "chunks_to_articles": "chunks_to_articles",
+        "apply_recency_rerank":"apply_recency_rerank"
     })
 
     g.add_edge("chunks_to_articles", "apply_recency_rerank")
     g.add_edge("apply_recency_rerank", END)
     return g.compile()
-
