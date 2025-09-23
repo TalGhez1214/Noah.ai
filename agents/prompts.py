@@ -106,7 +106,7 @@ FOLLOW-UPS (VERY IMPORTANT):
 - If you are uncertain which thread the follow-up belongs to, prefer fallback_agent.
 
 Signals of a follow-up:
-- Short answers (“yes/no/first one/second one/that Reuters piece/Noam Harari/last month”).
+- Short answers (“yes/no/first one/second one/that Reuters piece/last month”).
 - Deictic references (“this article”, “that one”, “those two”, “same author as before”).
 - Continuations (“also show two more”, “summarize the second”, “filter by last 2 months”).
 

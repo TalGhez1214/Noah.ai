@@ -7,11 +7,14 @@ from .base import BaseSubAgent
 
 
 class QASubAgent(BaseSubAgent):
-    def __init__(self, retriever, model: str, prompt: str, top_k: int = 6) -> None:
+    def __init__(
+        self,
+        retriever,
+        prompt: str,
+    ) -> None:
         self.name = "qa_agent"
         self.description = "Q&A agent that answers user questions using retrieved knowledge."
         self.retriever = retriever
-        self.top_k = top_k
         self.prompt = prompt
 
         @tool("get_knowledge_for_answer", description="Get knowledge for answer")
