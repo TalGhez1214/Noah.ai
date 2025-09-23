@@ -44,13 +44,14 @@ class ManagerAgent:
 
         
         ## Available sub-agents ##
-        #self.qa_agent = QASubAgent(retriever=self.retriever, model=model, prompt=QA_PROMPT)
+        self.qa_agent = QASubAgent(retriever=self.retriever, model=model, prompt=QA_PROMPT)
         self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=model, prompt=SUMMARY_PROMPT)
         self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=article_finder_prompt)
         self.fallback_agent = FallbackSubAgent(model=model, prompt=fallback_agent_prompt)
         self.highlighter_agent = HighlighterSubAgent(model=model)
 
         self._agents = [
+                        self.qa_agent,
                         self.article_summary_agent, 
                         self.articles_finder_agent, 
                         self.fallback_agent,
@@ -71,14 +72,14 @@ class ManagerAgent:
         ## LangGraph build ##
         graph = StateGraph(GraphState)
         graph.add_node(self._supervisor_agent)
-        #graph.add_node(self.qa_agent.name, self.qa_agent.call)
+        graph.add_node(self.qa_agent.name, self.qa_agent.call)
         graph.add_node(self.article_summary_agent.name, self.article_summary_agent.call)
         graph.add_node(self.articles_finder_agent.name, self.articles_finder_agent.call)
         graph.add_node(self.fallback_agent.name, self.fallback_agent.call)
         graph.add_node(self.highlighter_agent.name, self.highlighter_agent.call)
 
         graph.add_edge(START, "supervisor")
-        #graph.add_edge(self.qa_agent.name, END)
+        graph.add_edge(self.qa_agent.name, END)
         graph.add_edge(self.article_summary_agent.name, END)
         graph.add_edge(self.articles_finder_agent.name, END)
         graph.add_edge(self.fallback_agent.name, END)

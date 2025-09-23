@@ -15,7 +15,6 @@ def rag_retriever():
     Returns:
         RAGRetriever: An instance of the RAGRetriever class.
     """
-    base_path = "./rag/data_indexing/indexes_and_metadata_files"
     return build_graph()
 
 @pytest.fixture
