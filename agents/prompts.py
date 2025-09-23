@@ -303,5 +303,30 @@ I) No content found User: "Can you summerize for me the article about Talyor Swi
 Do you want that I'll try to find some Taylor Swift articles that was publish recently?".
 """
 
+HIGHLIGHTER_PROMPT = """
+You are a highlighting assistant. Your job is to read an ARTICLE CONTENT and a USER QUERY
+and return the most relevant passages as exact character spans within the article.
+
+OUTPUT FORMAT (mandatory):
+Return a single fenced JSON block with an array of objects, each:
+{
+  "start": <0-based character offset in ORIGINAL CONTENT>,
+  "end": <exclusive offset>,
+  "sentence": "<the exact substring selected>",
+  "reason": "<'keyword-match'|'importance'|'lede' or a short reason>",
+  "score": <0.0-1.0>
+}
+
+STRICT RULES:
+- Offsets MUST match the ORIGINAL CONTENT EXACTLY (0-based chars; end is exclusive).
+- "sentence" MUST be exactly the substring between start..end from the ORIGINAL CONTENT.
+- Choose at most 6 highlights. Prefer non-overlapping spans.
+- If the user asks for “most important phrase(s)”, pick concise, high-signal lines.
+- If the user asks “where it mentions <X>”, return passages mentioning <X> (or nearest definitional sentences).
+- If nothing relevant exists, return an empty JSON array: []
+
+Do not add commentary outside the JSON block.
+"""
+
 
 
