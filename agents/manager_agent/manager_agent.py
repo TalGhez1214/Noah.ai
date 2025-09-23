@@ -14,6 +14,7 @@ from agents.sub_agents.qa import QASubAgent
 from agents.sub_agents.summarizer import SummarizerSubAgent
 from agents.sub_agents.articles_finder import ArticalFinderSubAgent
 from agents.sub_agents.fallback import FallbackSubAgent
+from agents.sub_agents.highlighter import HighlighterSubAgent
 
 
 # ---- import search graph module ----
@@ -47,11 +48,13 @@ class ManagerAgent:
         self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=model, prompt=SUMMARY_PROMPT)
         self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=article_finder_prompt)
         self.fallback_agent = FallbackSubAgent(model=model, prompt=fallback_agent_prompt)
+        self.highlighter_agent = HighlighterSubAgent(model=model)
 
         self._agents = [
                         self.article_summary_agent, 
                         self.articles_finder_agent, 
-                        self.fallback_agent
+                        self.fallback_agent,
+                        self.highlighter_agent, 
                         ]
 
         self._tools = self.create_tools(
@@ -72,12 +75,14 @@ class ManagerAgent:
         graph.add_node(self.article_summary_agent.name, self.article_summary_agent.call)
         graph.add_node(self.articles_finder_agent.name, self.articles_finder_agent.call)
         graph.add_node(self.fallback_agent.name, self.fallback_agent.call)
+        graph.add_node(self.highlighter_agent.name, self.highlighter_agent.call)
 
         graph.add_edge(START, "supervisor")
         #graph.add_edge(self.qa_agent.name, END)
         graph.add_edge(self.article_summary_agent.name, END)
         graph.add_edge(self.articles_finder_agent.name, END)
         graph.add_edge(self.fallback_agent.name, END)
+        graph.add_edge(self.highlighter_agent.name, END)
 
         self.app = graph.compile(checkpointer=memory)
 
