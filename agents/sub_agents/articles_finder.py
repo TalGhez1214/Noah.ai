@@ -1,127 +1,166 @@
-from typing import List
-from langgraph.prebuilt import create_react_agent
+from __future__ import annotations
+from typing import Any, Dict, List
+import json
+
 from langchain_openai import ChatOpenAI
-from langchain.prompts import PromptTemplate
+from langchain_core.messages import SystemMessage
+from langchain_core.tools import tool
+from langgraph.prebuilt import create_react_agent, InjectedState
+from typing_extensions import Annotated
+
+# Output parser
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
-from agents.prompts import article_finder_prompt
-from langchain_core.messages import AIMessage
-from .base import BaseSubAgent
-from typing import Any, Dict, Optional
+
+# Tavily web search tool (ONLY this one)
+from langchain_community.tools.tavily_search import TavilySearchResults
 
 
-class ArticalFinderSubAgent(BaseSubAgent):
+class QASubAgent:
     """
-    Builds a ReAct agent for find relevant articles for a specific user query.
+    Q&A agent that answers user questions using:
+    1) Conversation + current page content (highest priority)
+    2) get_data_for_answer_from_database_tool (website content)
+    3) Tavily web search (for up-to-date info)
+    4) General knowledge (only if still necessary)
+
+    Final output MUST follow the StructuredOutputParser schema:
+      {
+        "answer": "<short, simple answer>",
+        "resource_list": ["<ids from DB tool used>"]
+      }
     """
 
-    def __init__(self, 
-                 retriever, 
-                 model: str = "gpt-4o-mini", 
-                 prompt = article_finder_prompt) -> None:
-        
-        self.name = "articles_finder_agent"
-        self.description = "This agent finds the most relevant articles for the user query"
+    def __init__(
+        self,
+        retriever,
+        model: str,
+        prompt: str,  # system prompt template with {current_page_content}
+    ) -> None:
+        self.name = "qa_agent"
+        self.description = "Q&A agent that answers user questions using retrieved knowledge."
         self.retriever = retriever
+        self.prompt_template = prompt
 
+        # ---------- TOOLS ----------
+        @tool(
+            "get_data_for_answer_from_database_tool",
+            description=(
+                "Retrieve relevant website content (chunks) to answer the user's question. "
+                "Returns a list of dicts with fields: 'id' and 'content'. Use these when the user asks "
+                "about the current article/site topics or when conversation/current page isn't enough."
+            ),
+        )
+        def get_data_for_answer_from_database_tool(
+            state: Annotated[dict, InjectedState],  # injected automatically by LangGraph
+        ) -> List[Dict[str, Any]]:
+            initial = {
+                "messages": state.get("messages", []),
+                "user_query": state.get("user_query", "") or "",
+                "file_type": "chunks",
+                "requested_k": 10,  # Number of chunks to return
+            }
+            out: Dict[str, Any] = self.retriever.invoke(initial)
+            top_results = out.get("top_results", []) or []
+            # Expecting a list[{"id": "...", "content": "..."}]
+            return top_results
 
-        # Define the response schemas for the output parser
+        # Only Tavily web search
+        web_search_tool = TavilySearchResults(
+            max_results=5,
+            name="web_search",
+            description=(
+                "Search the web for up-to-date information. Use ONLY if conversation/current page and "
+                "database content are insufficient. Return concise results."
+            ),
+        )
+
+        self._tools = [get_data_for_answer_from_database_tool, web_search_tool]
+
+        # ---------- OUTPUT PARSER ----------
+        # Define response schema: answer (str), resource_list (list[str])
         self._response_schemas = [
-            ResponseSchema(name="Summary", description="One-sentence summary of the text"),
-            ResponseSchema(name="Key Quote", description="A key direct quote from the text"),
+            ResponseSchema(
+                name="answer",
+                description="Short, simple answer text for the user. If web search or general knowledge was used, begin by stating that no relevant information was found on the website."
+            ),
+            ResponseSchema(
+                name="resource_list",
+                description="A JSON array of strings with the exact 'id' values of DB chunks actually used. If none were used, return an empty array []."
+            ),
         ]
-
         self._output_parser = StructuredOutputParser.from_response_schemas(self._response_schemas)
+        self._format_instructions = self._output_parser.get_format_instructions()
 
-        self.prompt = prompt
+        # ---------- LLM + Agent ----------
+        # Lower temperature for reliability/grounding; you can tune later.
+        self._llm = ChatOpenAI(model=model, temperature=0.2)
 
-        self._llm = ChatOpenAI(model=model, temperature=0.0)
+        # We'll inject SystemMessage at call-time (so {current_page_content} is fresh).
         self.agent = create_react_agent(
             model=self._llm,
-            tools=[],
-            prompt=self.prompt,
-            name="articles_finder",
+            tools=self._tools,
+            prompt="",  # we prepend a SystemMessage in call()
+            name="qa",
         )
-        
-    def get_knowledge_for_answer(self, user_query: str) -> str:
-        """
-        Retrieve the most relevant pieces of knowledge (short text chunks)
-        from the news database for answering a specific user question.
-        
-        Input:
-            user_query (str): The exact question the user asked.
 
-        Output:
-            A plain text string containing ONLY the concatenated 'chunk' fields
-            from the top retrieved snippets
-        """
-        return ""
+    def _format_system_prompt(self, state: Dict[str, Any]) -> str:
+        current_page_content = state.get("current_page_content", "") or ""
+        # Insert the parser's format instructions into the prompt so the model emits the correct JSON.
+        return self.prompt_template.format(
+            current_page_content=current_page_content,
+            format_instructions=self._format_instructions,
+        )
 
-    def structured_output(self, llm_output: str):
+    def structured_output(self, llm_output: str) -> Dict[str, Any]:
         """
-        Convert the output string from the agent into a structured ArticleSummary object.
+        Convert the output string from the agent into a structured object per the parser schema.
+        Retries with a self-fix prompt up to 3 times.
         """
         for parse_try in range(3):
-            # Attempt to parse the output using the structured output parser
-            # This will raise an exception if the output is not valid JSON
-            # or does not match the expected schema.
             try:
                 parsed = self._output_parser.parse(llm_output)
-                return parsed
+                # Normalize types
+                answer = parsed.get("answer", "")
+                resource_list = parsed.get("resource_list", [])
+                if not isinstance(answer, str):
+                    answer = str(answer)
+                if not isinstance(resource_list, list):
+                    resource_list = []
+                resource_list = [str(x) for x in resource_list]
+                return {"answer": answer, "resource_list": resource_list}
             except Exception as e:
                 print(f"⚠️ Parsing attempt {parse_try+1} failed:", e)
-                # Optional: retry with a fix
-                format_instructions = self._output_parser.get_format_instructions()
-                fixed_prompt = f"""Your previous output was invalid: \n{llm_output} \n\n {format_instructions}\n
-                Fix this into valid JSON only, nothing else.
-                
-                If you dont know the answer to one of the fields, just return "Invalid output" for that field."""
+                # Retry with format instructions
+                fixed_prompt = (
+                    "Your previous output was invalid:\n"
+                    f"{llm_output}\n\n"
+                    f"{self._format_instructions}\n"
+                    "Fix this into valid JSON only, nothing else.\n"
+                    'If you dont know the answer to one of the fields, just return "Invalid output" for that field.'
+                )
                 llm_output = self._llm.invoke(fixed_prompt).content.strip()
-                
+
         # Only raise after all retries failed
-        raise ValueError("Failed to parse output after multiple attempts.") 
-    
+        raise ValueError("Failed to parse output after multiple attempts.")
+
     def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
         """
-        This node handles the articles finder agent, which retrieves relevant articles
-        based on the user's query and returns them as a dictionary response for each article:
-        {
-            "title": "Article Title",
-            "Summary": "Article Summary",
-            "Key Quote": "Key Quote from the article",
-        }
+        Expected state keys:
+          - messages: list of LC messages (user/assistant)
+          - current_page_content: str (raw text of current article/page)
+          - user_query: str (best-effort copy of user's latest query)
         """
-        retrieve_state = {
-            "messages": state.get("messages", []),
-            "user_query": state.get("user_query", ""),
-        }
-        articles = self.retriever.invoke(retrieve_state).get("top_results", [])
-        articles_snippets = []
+        system_prompt = self._format_system_prompt(state)
+        messages = [SystemMessage(system_prompt)] + state.get("messages", [])
 
-        for article in articles:
-            agent_answer = self.agent.invoke(
-                                        {"messages": []},  # still required even if unused
-                                        config={
-                                            "configurable": {
-                                                "user_query": state["user_query"],
-                                                "title": article["title"],
-                                                "author": article.get("author", "Unknown"),
-                                                "content": article.get("content", ""),
-                                                "format_instructions": self._output_parser.get_format_instructions(),
-                                            }
-                                        }
-                                    )
-            try:
-                json_output = self.structured_output(agent_answer["messages"][-1].content)
-            except Exception as e:
-                print(f"Error parsing structured output: {e}")
-                json_output = {"Summary": "No summary available", "Key Quote": "No quote available"}
-            articles_snippets.append(json_output)
+        out = self.agent.invoke({"messages": messages})
 
-        for i in range(len(articles_snippets)):
-            articles_snippets[i]["title"] = articles[i]["title"]
-            articles_snippets[i]["url"] = articles[i]["url"] # Make sure it's clickable in the UI
+        # The last assistant message should be JSON per our parser.
+        final_msg = out["messages"][-1]
+        final_content = getattr(final_msg, "content", "") or ""
 
-        return {
-            "messages": [AIMessage(content=f"{articles_snippets}")], 
-            "agent": "articles_finder"
-        }
+        parsed = self.structured_output(final_content)
+        # Replace the last message with the coerced JSON text to keep graph state consistent
+        out["messages"][-1].content = json.dumps(parsed, ensure_ascii=False)
+
+        return {"messages": out["messages"], "agent": self.name}
