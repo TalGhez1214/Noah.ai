@@ -1,166 +1,194 @@
 from __future__ import annotations
 from typing import Any, Dict, List
+from datetime import date
 import json
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import SystemMessage
 from langchain_core.tools import tool
+from langchain_core.messages import ToolMessage, HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent, InjectedState
 from typing_extensions import Annotated
 
-# Output parser
-from langchain.output_parsers import StructuredOutputParser, ResponseSchema
+from langchain_tavily import TavilySearch
 
-# Tavily web search tool (ONLY this one)
-from langchain_community.tools.tavily_search import TavilySearchResults
+# ---------- Parser schema (Pydantic) ----------
+from pydantic import BaseModel, Field
+from typing import List as _List
+
+
+class ResourcePickerSchema(BaseModel):
+    """
+    Structured output for the parser agent.
+    Select up to 3 relevant DB chunk IDs that best support the user's question and the draft answer.
+    """
+    resource_list: _List[str] = Field(
+        default_factory=list,
+        description="Up to 3 exact chunk IDs from get_data_for_answer_from_database_tool that truly support the answer. [] if none."
+    )
 
 
 class QASubAgent:
     """
-    Q&A agent that answers user questions using:
-    1) Conversation + current page content (highest priority)
-    2) get_data_for_answer_from_database_tool (website content)
-    3) Tavily web search (for up-to-date info)
-    4) General knowledge (only if still necessary)
+    Simple Q&A agent + end-of-run parser:
 
-    Final output MUST follow the StructuredOutputParser schema:
-      {
-        "answer": "<short, simple answer>",
-        "resource_list": ["<ids from DB tool used>"]
-      }
+    Flow:
+      1) ReAct QA agent (can call DB tool and/or web_search) → produces a draft answer (free-form text).
+      2) Parser agent (with_structured_output(ResourcePickerSchema)) → reads the draft + tool trace and returns
+         up to 3 relevant DB chunk IDs (or []).
+      3) Final output:
+         - messages[-1].content = the original draft answer (unchanged),
+         - relevant_articles_for_user = selected IDs.
     """
 
-    def __init__(
-        self,
-        retriever,
-        model: str,
-        prompt: str,  # system prompt template with {current_page_content}
-    ) -> None:
+    def __init__(self, retriever, model: str, prompt) -> None:
         self.name = "qa_agent"
-        self.description = "Q&A agent that answers user questions using retrieved knowledge."
+        self.description = "This agent is responsible for all the question answering requests."
         self.retriever = retriever
-        self.prompt_template = prompt
+        self.prompt = prompt
+        self.model = model
 
-        # ---------- TOOLS ----------
+        # ----- Tools -----
         @tool(
             "get_data_for_answer_from_database_tool",
             description=(
                 "Retrieve relevant website content (chunks) to answer the user's question. "
-                "Returns a list of dicts with fields: 'id' and 'content'. Use these when the user asks "
-                "about the current article/site topics or when conversation/current page isn't enough."
+                "Returns a list of dicts with fields: 'id' and 'content'."
             ),
         )
         def get_data_for_answer_from_database_tool(
-            state: Annotated[dict, InjectedState],  # injected automatically by LangGraph
+            state: Annotated[dict, InjectedState],
         ) -> List[Dict[str, Any]]:
             initial = {
                 "messages": state.get("messages", []),
                 "user_query": state.get("user_query", "") or "",
                 "file_type": "chunks",
-                "requested_k": 10,  # Number of chunks to return
+                "requested_k": 10,
             }
             out: Dict[str, Any] = self.retriever.invoke(initial)
-            top_results = out.get("top_results", []) or []
-            # Expecting a list[{"id": "...", "content": "..."}]
-            return top_results
+            return out.get("top_results", []) or []
 
-        # Only Tavily web search
-        web_search_tool = TavilySearchResults(
+        web_search_tool = TavilySearch(
             max_results=5,
             name="web_search",
-            description=(
-                "Search the web for up-to-date information. Use ONLY if conversation/current page and "
-                "database content are insufficient. Return concise results."
-            ),
+            description="Search the web for up-to-date information.",
         )
 
         self._tools = [get_data_for_answer_from_database_tool, web_search_tool]
 
-        # ---------- OUTPUT PARSER ----------
-        # Define response schema: answer (str), resource_list (list[str])
-        self._response_schemas = [
-            ResponseSchema(
-                name="answer",
-                description="Short, simple answer text for the user. If web search or general knowledge was used, begin by stating that no relevant information was found on the website."
-            ),
-            ResponseSchema(
-                name="resource_list",
-                description="A JSON array of strings with the exact 'id' values of DB chunks actually used. If none were used, return an empty array []."
-            ),
-        ]
-        self._output_parser = StructuredOutputParser.from_response_schemas(self._response_schemas)
-        self._format_instructions = self._output_parser.get_format_instructions()
-
-        # ---------- LLM + Agent ----------
-        # Lower temperature for reliability/grounding; you can tune later.
-        self._llm = ChatOpenAI(model=model, temperature=0.2)
-
-        # We'll inject SystemMessage at call-time (so {current_page_content} is fresh).
+        # ----- Base LLM + ReAct Agent -----
+        self._llm = ChatOpenAI(model=self.model, temperature=0.2)
         self.agent = create_react_agent(
             model=self._llm,
             tools=self._tools,
-            prompt="",  # we prepend a SystemMessage in call()
+            prompt=self.prompt,
             name="qa",
         )
 
-    def _format_system_prompt(self, state: Dict[str, Any]) -> str:
-        current_page = state.get("current_page", "") or ""
-        # Insert the parser's format instructions into the prompt so the model emits the correct JSON.
-        return self.prompt_template.format(
-            current_page_content=current_page["content"] if isinstance(current_page, dict) else "",
-            format_instructions=self._format_instructions,
-        )
+        # ----- Parser Agent (strict schema; no tool calls) -----
+        # IMPORTANT: This finisher enforces schema and MUST NOT change the answer text.
+        self._parser_llm = ChatOpenAI(model=self.model, temperature=0).with_structured_output(ResourcePickerSchema)
 
-    def structured_output(self, llm_output: str) -> Dict[str, Any]:
-        """
-        Convert the output string from the agent into a structured object per the parser schema.
-        Retries with a self-fix prompt up to 3 times.
-        """
-        for parse_try in range(3):
-            try:
-                parsed = self._output_parser.parse(llm_output)
-                # Normalize types
-                answer = parsed.get("answer", "")
-                resource_list = parsed.get("resource_list", [])
-                if not isinstance(answer, str):
-                    answer = str(answer)
-                if not isinstance(resource_list, list):
-                    resource_list = []
-                resource_list = [str(x) for x in resource_list]
-                return {"answer": answer, "resource_list": resource_list}
-            except Exception as e:
-                print(f"⚠️ Parsing attempt {parse_try+1} failed:", e)
-                # Retry with format instructions
-                fixed_prompt = (
-                    "Your previous output was invalid:\n"
-                    f"{llm_output}\n\n"
-                    f"{self._format_instructions}\n"
-                    "Fix this into valid JSON only, nothing else.\n"
-                    'If you dont know the answer to one of the fields, just return "Invalid output" for that field.'
-                )
-                llm_output = self._llm.invoke(fixed_prompt).content.strip()
+    # ---------- Helpers ----------
 
-        # Only raise after all retries failed
-        raise ValueError("Failed to parse output after multiple attempts.")
+    def _collect_db_tool_results(self, messages: List[Any]) -> List[Dict[str, Any]]:
+        """
+        Gather the raw dict items returned by get_data_for_answer_from_database_tool across the run.
+        Each ToolMessage content may be:
+          - a Python list[dict], or
+          - a JSON string representing list[dict]
+        We return a flat list of dicts: [{"id": "...", "content": "..."}, ...]
+        """
+        results: List[Dict[str, Any]] = []
+        for m in messages:
+            if isinstance(m, ToolMessage) and getattr(m, "name", "") == "get_data_for_answer_from_database_tool":
+                payload = m.content
+                try:
+                    data = json.loads(payload) if isinstance(payload, str) else payload
+                    if isinstance(data, list):
+                        for item in data:
+                            if isinstance(item, dict) and "article_id" in item and "snippet" in item:
+                                results.append({"id": str(item["article_id"]), "content": str(item["snippet"])})
+                except Exception:
+                    # Ignore malformed tool payloads gracefully
+                    continue
+        return results
+
+    def _run_resource_picker(
+        self,
+        user_query: str,
+        draft_answer_text: str,
+        db_chunks: List[Dict[str, Any]],
+        page_content: str,
+    ) -> ResourcePickerSchema:
+        """
+        Parser agent: MUST NOT change the draft answer.
+        It only selects up to 3 relevant IDs from db_chunks (or []) using the schema.
+        """
+        system = SystemMessage(content=(
+            "You are a finisher that selects up to 3 website chunk IDs supporting the draft answer. "
+            "Rules:\n"
+            "- DO NOT change or rewrite the draft answer text.\n"
+            "- Choose only IDs that are clearly relevant to the user's question and the draft answer; otherwise return [].\n"
+            "- Never invent IDs. Only use IDs present in db_chunks.\n"
+            "- Return resource_list with at most 3 string IDs.\n"
+        ))
+        # Provide only what's needed. db_chunks includes the full dicts {"id","content"}.
+        human_payload = {
+            "user_query": user_query,
+            "draft_answer_text": draft_answer_text,
+            "db_chunks": db_chunks,              # list of {"id": str, "content": str}
+            "current_page_excerpt": page_content[:2000],
+        }
+        human = HumanMessage(content=json.dumps(human_payload, ensure_ascii=False))
+
+        result: ResourcePickerSchema = self._parser_llm.invoke([system, human])
+        # Normalize output just in case
+        ids = result.resource_list or []
+        if not isinstance(ids, list):
+            ids = []
+        ids = [str(x) for x in ids][:3]
+        return ResourcePickerSchema(resource_list=ids)
+
+    # ---------- Public API ----------
 
     def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Expected state keys:
-          - messages: list of LC messages (user/assistant)
-          - current_page_content: str (raw text of current article/page)
-          - user_query: str (best-effort copy of user's latest query)
-        """
-        system_prompt = self._format_system_prompt(state)
-        messages = [SystemMessage(system_prompt)] + state.get("messages", [])
+        page_content = (state.get("current_page") or {}).get("content", "") or ""
+        messages = state.get("messages", []) or []
+        user_query = state.get("user_query", "") or ""
 
-        out = self.agent.invoke({"messages": messages})
+        # 1) Run the main ReAct QA agent (free to call tools as needed)
+        agent_answer = self.agent.invoke(
+            {"messages": messages},
+            config={
+                "configurable": {
+                    "current_page_content": page_content,
+                    "today": date.today().isoformat(),
+                    "user_query": user_query,
+                }
+            },
+        )
 
-        # The last assistant message should be JSON per our parser.
-        final_msg = out["messages"][-1]
-        final_content = getattr(final_msg, "content", "") or ""
+        # 2) Get the draft assistant output (leave it EXACTLY as is)
+        final_msg = agent_answer["messages"][-1]
+        draft_answer_text = getattr(final_msg, "content", "") or ""
 
-        parsed = self.structured_output(final_content)
-        # Replace the last message with the coerced JSON text to keep graph state consistent
-        out["messages"][-1].content = json.dumps(parsed, ensure_ascii=False)
+        # 3) Gather all DB tool results as list[dict] with "id" and "content"
+        db_chunks = self._collect_db_tool_results(agent_answer["messages"])
 
-        return {"messages": out["messages"], "agent": self.name}
+        # 4) Parser: pick up to 3 relevant IDs (answer text is NOT changed)
+        picker = self._run_resource_picker(
+            user_query=user_query,
+            draft_answer_text=draft_answer_text,
+            db_chunks=db_chunks,
+            page_content=page_content,
+        )
+
+        # 5) Replace the last assistant message with the original draft answer (unchanged)
+        agent_answer["messages"][-1].content = draft_answer_text
+
+        # 6) Return final state
+        return {
+            "messages": agent_answer["messages"],
+            "agent": self.name,
+            "relevant_articles_for_user": list(picker.resource_list or []),
+        }

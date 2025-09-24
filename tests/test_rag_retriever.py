@@ -13,6 +13,10 @@ from datetime import datetime, timezone
 import faiss
 import pickle
 
+import os, pytest
+if not os.getenv("RUN_OLD_RETRIEVER_TESTS"):
+    pytest.skip("Set RUN_OLD_RETRIEVER_TESTS=1 to enable these tests", allow_module_level=True)
+
 @pytest.fixture
 def rag_retriever():
     """

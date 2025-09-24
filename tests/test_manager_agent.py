@@ -97,3 +97,34 @@ def test_followup_summarize_after_results_routes_to_summary():
 
     tools2 = _tool_messages(msgs2)
     assert tools2[-1]["name"] == "transfer_to_summary_agent"
+
+def test_routes_to_qa_agent_for_article_grounded_question():
+    """
+    Direct question about the current article → route to qa_agent.
+    """
+    from agents.manager_agent.manager_agent import ManagerAgent
+    mgr = ManagerAgent(
+        user_query="According to this article, what is AI?",
+        user_id="u-qa-article",
+        current_page={"content": "AI refers to systems that mimic human-like intelligence..."}
+    )
+    msgs = mgr.chat()
+
+    tools = _tool_messages(msgs)
+    assert tools[0]["name"] == "transfer_to_qa_agent"
+
+
+def test_routes_to_qa_agent_for_general_qna_not_summary_or_find():
+    """
+    General Q&A (not 'summarize', not 'find articles', not 'highlight') → route to qa_agent.
+    """
+    from agents.manager_agent.manager_agent import ManagerAgent
+    mgr = ManagerAgent(
+        user_query="Who won the NBA championship last season?",
+        user_id="u-qa-general"
+    )
+    msgs = mgr.chat()
+
+    tools = _tool_messages(msgs)
+    assert tools[0]["name"] == "transfer_to_qa_agent"
+
