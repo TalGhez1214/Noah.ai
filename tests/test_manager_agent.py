@@ -120,7 +120,7 @@ def test_routes_to_qa_agent_for_general_qna_not_summary_or_find():
     """
     from agents.manager_agent.manager_agent import ManagerAgent
     mgr = ManagerAgent(
-        user_query="Who won the NBA championship last season?",
+        user_query="How many soldiers died last week in Gaza?",
         user_id="u-qa-general"
     )
     msgs = mgr.chat()

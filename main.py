@@ -340,5 +340,6 @@ async def ask_user(request: AskRequest):
     )
 
     messages = manager.chat()
+
     last_ai = next((m.content for m in reversed(messages) if isinstance(m, AIMessage)), "...")
     return AskResponse(result=last_ai)

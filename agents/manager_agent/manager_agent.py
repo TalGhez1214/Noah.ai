@@ -36,12 +36,18 @@ memory = MemorySaver()
 
 
 class ManagerAgent:
-    def __init__(self, model: str = "gpt-4o-mini", user_query: str = "", user_id: Optional[str] = None, current_page: Optional[dict] = None):
+    def __init__(
+            self, 
+            model: str = "gpt-4o", 
+            user_query: str = "", 
+            user_id: Optional[str] = None, 
+            current_page: Optional[dict] = None,
+            use_checkpointer: bool = True, 
+            ):
         self.user_query = user_query
         self.user_id = user_id
         self.retriever = M.build_graph()
         self.current_page = current_page
-
         
         ## Available sub-agents ##
         self.qa_agent = QASubAgent(retriever=self.retriever, model="gpt-4o", prompt=qa_prompt)
@@ -85,7 +91,11 @@ class ManagerAgent:
         graph.add_edge(self.fallback_agent.name, END)
         graph.add_edge(self.highlighter_agent.name, END)
 
-        self.app = graph.compile(checkpointer=memory)
+        # 👇 Compile conditionally
+        if use_checkpointer:
+            self.app = graph.compile(checkpointer=memory)
+        else:
+            self.app = graph.compile()
 
 
     def create_tools(self, agents):
@@ -135,17 +145,32 @@ class ManagerAgent:
         # calling manager agent to start working
         updated = self.app.invoke(graph_state, thread) # Here we added the user query as a new message to the Graph state
         
-        # Print all messages in the updated state
-        
-        # print("\n🗨️ Conversation History:")
-        # for m in updated["messages"]:
-        #     m.pretty_print()
-        print("\n🗨️ Conversation (no tool messages):")
+        print("\n🗨️ Full conversation (including tool messages):")
         for m in updated["messages"]:
-            if getattr(m, "type", "") not in {"tool"}:  # keep human/ai/system only
-                m.pretty_print()
+            try:
+                # LangChain message types
+                if hasattr(m, "pretty_print"):
+                    m.pretty_print()
+                else:
+                    # Fallback for dicts / custom payloads
+                    print("TOOL/RAW:", m)
+            except Exception as e:
+                print("<<could not render message>>", type(m), m, e)
         return updated["messages"]
     
     
-
-    
+# --- Export compiled graph for LangGraph Studio ---
+# Studio (langgraph dev) expects a module-level variable named exactly as in langgraph.json.
+# Compile WITHOUT a custom checkpointer.
+try:
+    _manager_for_studio = ManagerAgent(
+        model="gpt-4o-mini",
+        user_query="",
+        user_id="studio",
+        current_page=None,
+        use_checkpointer=False,   # <--- IMPORTANT
+    )
+    app = _manager_for_studio.app      # Studio loads this
+except Exception as _e:
+    # Optional: avoid import-time hard fails if local deps not ready
+    app = None

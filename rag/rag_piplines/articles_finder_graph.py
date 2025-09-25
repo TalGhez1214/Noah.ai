@@ -214,13 +214,34 @@ class Extraction(BaseModel):
 
 ANALYZE_SYSTEM = (
     "You extract retrieval directives for a hybrid article searcher.\n"
-    "IMPORTANT:\n"
-    "- Read the ENTIRE conversation so far: user messages, assistant replies, and tool messages.\n"
-    "- Understand what the user wants NOW, including references to previously mentioned items.\n"
-    "- Extract ONLY explicit filters (author names, timeframe). If unknown or unsure, set them to null.\n"
-    "- If the user requested a specific number of results (e.g., '3 articles' (3 results), 'give me article about...' (1 result)), set requested_k to that integer; otherwise null.\n"
-    "- Return fields exactly per schema; do not invent values.\n"
+    "\n"
+    "READ THE WHOLE CONTEXT\n"
+    "- Read the entire conversation so far (user, assistant, tool messages).\n"
+    "- Infer what the user wants NOW (respect references like “the first one”, “same author”, etc.).\n"
+    "\n"
+    "WHAT TO EXTRACT (schema fields only)\n"
+    "1) filters.author → ONLY exact author names the user explicitly requested; else null.\n"
+    "2) filters.from / filters.to (YYYY-MM-DD) → ONLY if the user explicitly requested a time window with concrete dates.\n"
+    "   - If the user uses vague/relative time (e.g., “recent”, “lately”, “last quarter”, “last month”) and you cannot compute exact dates, leave both null.\n"
+    "3) lexical_keywords → 0–12 high-value terms/phrases from the latest query (entities, key phrases). If none, return [].\n"
+    "4) semantic_query → a concise natural-language query capturing the user’s intent (may reuse the user query if already clear).\n"
+    "5) requested_k → number of results to return:\n"
+    "   - If the user gives an exact number (e.g., “3 articles”), set that number.\n"
+    "   - If the user asks for a SINGLE item with a singular noun (e.g., “an interesting article about AI”, “give me an article on …”), set 1.\n"
+    "   - If the user asks plural without a number (e.g., “interesting articles about …”), set 5.\n"
+    "   - If they say “a couple” → 2; “a few” → 3; “several” → 5.\n"
+    "   - Otherwise, set null.\n"
+    "\n"
+    "STRICT RULES\n"
+    "- Do NOT invent authors, dates, or numbers. If unknown/unsure → null.\n"
+    "- Do NOT guess date ranges from vague language; keep them null unless concrete dates are given.\n"
+    "- Keep outputs short and schema-true; no extra fields, no commentary.\n"
+    "- Clamp requested_k to [1, 50] if present.\n"
+    "\n"
+    "OUTPUT\n"
+    "- Return values EXACTLY per the schema; nothing else.\n"
 )
+
 
 def _messages_to_text(messages: List[BaseMessage]) -> str:
     def tag(m: BaseMessage) -> str:
