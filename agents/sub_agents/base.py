@@ -37,11 +37,6 @@ def __init__(self, *args: Any, **kwargs: Any) -> None: # pragma: no cover
 
 
 @abstractmethod
-def get_knowledge_for_answer(self, query: str) -> str:
-    """Return concatenated context string from RAG for the given query."""
-
-
-@abstractmethod
 def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
     """Invoke with MessagesState-like input and return {"messages": ..., "agent": <label>}"""
 

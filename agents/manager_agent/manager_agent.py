@@ -11,7 +11,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from agents.prompts import SUPERVISOR_PROMPT, qa_prompt, SUMMARY_PROMPT, article_finder_prompt, fallback_agent_prompt, HIGHLIGHTER_PROMPT
 
 from agents.sub_agents.qa import QASubAgent
-from agents.sub_agents.summarizer import SummarizerSubAgent
+from agents.sub_agents.summarizer.summarizer_agent import SummarizerSubAgent
 from agents.sub_agents.articles_finder import ArticalFinderSubAgent
 from agents.sub_agents.fallback import FallbackSubAgent
 from agents.sub_agents.highlighter import HighlighterSubAgent

@@ -3,7 +3,7 @@ import os
 import re
 import pytest
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
-from agents.sub_agents.summarizer import SummarizerSubAgent
+from agents.sub_agents.summarizer.summarizer_agent import SummarizerSubAgent
 from agents.prompts import SUMMARY_PROMPT
 from dotenv import load_dotenv
 from pymongo import MongoClient
@@ -31,12 +31,10 @@ def mongo_collection():
 
 @pytest.fixture
 def summarizer_agent(mongo_collection):
-    from agents.sub_agents.summarizer import SummarizerSubAgent
     return SummarizerSubAgent(
         retriever=M.build_graph(),
         model="gpt-4o-mini",
         prompt=SUMMARY_PROMPT,
-        mongo_articles_collection=mongo_collection,
     )
 
 @pytest.fixture
