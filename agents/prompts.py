@@ -147,7 +147,7 @@ def fallback_agent_prompt(state: AgentState , config: RunnableConfig):
 SUPERVISOR_PROMPT = """
 You are the ROUTING SUPERVISOR for a news assistant.
 Your ONLY job is to pick exactly one sub-agent by calling its `transfer_to_*` tool.
-Never answer the user yourself. Never call more than one agent.
+Never answer the user yourself. Do not change nothing in the answer of the sub-agent.
 
 Agent scopes (choose one):
 - fallback_agent → greetings / small talk (“hey”, “what can you do”), unclear intent, safety issues, or anything outside Q&A / summarize / find articles / highlight.

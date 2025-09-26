@@ -75,21 +75,41 @@ class ManagerAgent:
                             name="supervisor",
                         )
 
-        ## LangGraph build ##
+        # 👇 LangGraph build
         graph = StateGraph(GraphState)
-        graph.add_node(self._supervisor_agent)
+
+        # nodes
+        # Add the supervisor with visual destinations (Studio-only)
+        graph.add_node(
+            "supervisor",
+            self._supervisor_agent,
+            destinations=(
+                self.qa_agent.name,
+                self.article_summary_agent.name,
+                self.articles_finder_agent.name,
+                self.fallback_agent.name,
+                self.highlighter_agent.name,
+                END,  # show a visible edge to END
+            ),
+        )                     
         graph.add_node(self.qa_agent.name, self.qa_agent.call)
         graph.add_node(self.article_summary_agent.name, self.article_summary_agent.call)
         graph.add_node(self.articles_finder_agent.name, self.articles_finder_agent.call)
         graph.add_node(self.fallback_agent.name, self.fallback_agent.call)
         graph.add_node(self.highlighter_agent.name, self.highlighter_agent.call)
 
+        # edges: hub-and-spoke
         graph.add_edge(START, "supervisor")
-        graph.add_edge(self.qa_agent.name, END)
-        graph.add_edge(self.article_summary_agent.name, END)
-        graph.add_edge(self.articles_finder_agent.name, END)
-        graph.add_edge(self.fallback_agent.name, END)
-        graph.add_edge(self.highlighter_agent.name, END)
+
+        # every sub-agent returns to the supervisor
+        graph.add_edge(self.qa_agent.name, "supervisor")
+        graph.add_edge(self.article_summary_agent.name, "supervisor")
+        graph.add_edge(self.articles_finder_agent.name, "supervisor")
+        graph.add_edge(self.fallback_agent.name, "supervisor")
+        graph.add_edge(self.highlighter_agent.name, "supervisor")
+
+        # only the supervisor can finish the run (default edge)
+        graph.add_edge("supervisor", END)
 
         # 👇 Compile conditionally
         if use_checkpointer:
