@@ -118,8 +118,8 @@ class SummarizerSubAgent(BaseSubAgent):
             # Append to modals (avoid in-place append returning None)
             modals = list(state.get("modals", []))
             modals.append(payload)
-
-            return {"modals": modals, "messages": [AIMessage(content=answer_text, name=self.name)]}
+        # , "messages": [AIMessage(content=answer_text, name=self.name)]
+            return {"modals": modals}
 
         # routing logic
         def should_continue(state: GraphState):
