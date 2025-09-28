@@ -7,7 +7,7 @@ class GraphState(MessagesState):
     user_query: Optional[str]
     current_page: Optional[dict] = None
     agent: Optional[str] = None
-    relevant_articles_for_user: Optional[list] = None  # List of articles id found for the user query
+    modals: Optional[list] = None  # List of modals
     
 # ---------- Sub-agent State----------
 class ReactAgentState(GraphState):

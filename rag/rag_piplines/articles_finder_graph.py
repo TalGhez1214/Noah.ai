@@ -645,7 +645,6 @@ def chunks_to_articles(state: SearchState) -> SearchState:
                 "url": d.get("article_url"),
                 "author": d.get("article_author") or d.get("chunk_author"),
                 "published_at": _to_iso(d.get("article_published_at") or d.get("chunk_published_at")),
-                "snippet": d.get("content_chunk"),
                 "content": d.get("article_content"),
                 "score": sc
             }

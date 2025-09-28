@@ -96,6 +96,7 @@ def get_articles_from_database_tool(
         "user_query": state.get("user_query", "") or ""
     }
     out: Dict[str, Any] = retriever.invoke(initial)
+    
     top_results = out.get("top_results", []) or []
     # Return just the best article (empty dict if nothing found)
     return top_results if top_results else {}

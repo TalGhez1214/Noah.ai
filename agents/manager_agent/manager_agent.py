@@ -93,7 +93,7 @@ class ManagerAgent:
             ),
         )                     
         graph.add_node(self.qa_agent.name, self.qa_agent.call)
-        graph.add_node(self.article_summary_agent.name, self.article_summary_agent.call)
+        graph.add_node(self.article_summary_agent.name, self.article_summary_agent.graph)
         graph.add_node(self.articles_finder_agent.name, self.articles_finder_agent.call)
         graph.add_node(self.fallback_agent.name, self.fallback_agent.call)
         graph.add_node(self.highlighter_agent.name, self.highlighter_agent.call)

@@ -3,13 +3,14 @@ from typing import Any, Dict
 from pydantic import BaseModel, Field
 
 from langchain_openai import ChatOpenAI
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
-from langgraph.prebuilt import ToolNode, InjectedState
+from langgraph.prebuilt import ToolNode
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from ..base import BaseSubAgent
 from typing_extensions import Annotated
-from agents.manager_agent.GraphStates import ReactAgentState
+from agents.manager_agent.GraphStates import GraphState
 from agents.sub_agents.summarizer.summarizer_tools import (
     summary_content_from_link_tool,
     summary_article_from_current_page_tool,
@@ -18,17 +19,63 @@ from agents.sub_agents.summarizer.summarizer_tools import (
 
 # ---------- Structured Output ----------
 class RespondFormat(BaseModel):
-    title: str = Field(..., description="The article's title")
-    summary: str = Field(..., description="2–5 sentence summary of the article")
-    url: str = Field(..., description="Canonical article URL, empty string if unknown")
+    # Copy the field VALUES exactly as written in the FINAL assistant message.
+    # Do not paraphrase, normalize, spell-correct, or change punctuation/casing/whitespace.
 
+    answer: str = Field(
+        ...,
+        description=(
+            "Verbatim answer from the 'Answer' field in the FINAL assistant message. "
+            "Copy EXACTLY as it appears (no rewording or normalization)."
+        ),
+    )
 
+    title: str = Field(
+        ...,
+        description=(
+            "Verbatim article title from the FINAL assistant message. "
+            "Copy EXACTLY as it appears (no rewording or normalization)."
+        ),
+    )
+    summary: str = Field(
+        ...,
+        description=(
+            "Verbatim article summary from the FINAL assistant message. "
+            "Copy EXACTLY as it appears; do not add/remove words or adjust formatting."
+        ),
+    )
+    url: str = Field(
+        ...,
+        description=(
+            'Verbatim URL from the FINAL assistant message. '
+            'Copy EXACTLY as it appears. If unknown, use an empty string "" (do not invent "N/A").'
+        ),
+    )
 class SummarizerSubAgent(BaseSubAgent):
     def __init__(self, retriever, model: str, prompt: str) -> None:
         self.name = "summary_agent"
         self.description = "This agent is responsible for all article summarizing requests."
         self.retriever = retriever
-        self.prompt = prompt
+
+        self.prompt = ChatPromptTemplate.from_messages([
+            ("system", prompt),
+            MessagesPlaceholder("messages"),
+        ])
+
+        self.format_prompt = ChatPromptTemplate.from_messages([
+                            (
+                                "system",
+                                "You are a strict extractor. Copy the Answer, Title, Summary, and URL **verbatim** "
+                                "from the LAST ASSISTANT MESSAGE provided below. Do NOT rewrite, paraphrase, "
+                                "spell-correct, normalize, or add/remove words. Preserve capitalization and punctuation. "
+                                "If a field is missing/ there is a clarification question, set it to an empty string (for URL, empty string is allowed). "
+                                "Return exactly the three fields required by the schema."
+                            ),
+                            (
+                                "user",
+                                "Last assistant message (the one you must copy from verbatim):\n\n{final_ai_text}"
+                            ),
+                            ])
 
         # ---------- TOOLS ----------
         self.tools = [
@@ -43,27 +90,39 @@ class SummarizerSubAgent(BaseSubAgent):
         self.parser_model = self.llm.with_structured_output(RespondFormat)
 
         # ---------- Build Graph ----------
-        workflow = StateGraph(ReactAgentState)
+        workflow = StateGraph(GraphState)
 
         # agent node
-        def call_model(state: ReactAgentState):
-            response = self.tool_enabled_llm.invoke(state["messages"])
+        def call_model(state: GraphState):
+            chain = self.prompt | self.tool_enabled_llm
+            response = chain.invoke({"messages": state["messages"]})
             return {"messages": [response]}
 
         # respond node (final structured answer)
-        def respond(state: ReactAgentState):
+        def respond(state: GraphState):
             """
             Parse the LAST AI message (the model's final text after all tools),
             which you've guided to contain title, summary, url.
             """
             final_ai = state["messages"][-1]           # <- last AIMessage (no tool_calls)
-            response = self.parser_model.invoke(
-                [HumanMessage(content=final_ai.content)]
-            )
-            return {"final_response": response}
+            formatter_chain = self.format_prompt | self.parser_model
+            parsed = formatter_chain.invoke({"final_ai_text": final_ai.content})
+
+            # Convert to dict safely
+            payload = parsed.model_dump() if hasattr(parsed, "model_dump") else dict(parsed)
+
+            # Tag for your UI
+            payload["type"] = "summary"
+            answer_text = payload.get("answer")
+
+            # Append to modals (avoid in-place append returning None)
+            modals = list(state.get("modals", []))
+            modals.append(payload)
+
+            return {"modals": modals, "messages": [AIMessage(content=answer_text, name=self.name)]}
 
         # routing logic
-        def should_continue(state: ReactAgentState):
+        def should_continue(state: GraphState):
             last_message = state["messages"][-1]
             if not last_message.tool_calls:
                 return "respond" # no tool calls → we're done; route to respond, where we run the structured-output model
@@ -88,17 +147,4 @@ class SummarizerSubAgent(BaseSubAgent):
 
         self.graph = workflow.compile()
 
-    def get_knowledge_for_answer(self, query: str) -> str:
-        return ""
-
-    def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
-        out = self.graph.invoke(state)
-        return {
-            "messages": out.get("messages", []),
-            "agent": self.name,
-            "final_json": (
-                out["final_response"].model_dump()
-                if "final_response" in out
-                else {}
-            ),
-        }
+    
