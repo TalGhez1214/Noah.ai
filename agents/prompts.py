@@ -67,10 +67,10 @@ def article_finder_prompt(state: AgentState, config: RunnableConfig):
     format_instructions = data["format_instructions"]
 
     # Build single system message with everything
-    system_prompt = f"""  ## Role ##
-                        You will receive a news article. Extract the following:
-                        1. A short 2–3 sentence summary.
-                        2. The most relevant quote from the article to the user query (1-2 sentences with more then 5 words).
+    system_prompt = f""" ## Role ##
+                        You will receive an article. Extract the following:
+                        1. summary: A short 2–3 sentence summary.
+                        2. quote: The most relevant quote from the article to the user query (1-2 sentences with more then 5 words).
 
                         user_query: {user_query}
 
@@ -78,8 +78,7 @@ def article_finder_prompt(state: AgentState, config: RunnableConfig):
                         - The quete should be a direct quote from the article and you are not allowed to paraphrase it.
                         - The quete should be the most relevant quete from the article to the user_query.
                         - The summary should be a concise overview of the article's main points.
-
-                        {format_instructions}
+                        - 
 
                         ## Article ##
 
@@ -130,6 +129,8 @@ def fallback_agent_prompt(state: AgentState , config: RunnableConfig):
                     - Ask **at most one** clarifying question per reply.
                     - Whenever you present options or examples, use **bullet points**.
                     - use emojies if helpful.
+                    - Do not assume or fabricate what content the website contain
+                    - Do not tell the user what content/articles you can provide - you don't know that - only the actions
 
                     WHAT YOU CAN DO:
                     - summarize articles
@@ -152,7 +153,7 @@ def fallback_agent_prompt(state: AgentState , config: RunnableConfig):
 # ================================
 SUPERVISOR_PROMPT = """
 You are the ROUTING SUPERVISOR.Your ONLY job is to pick exactly one sub-agent by calling its `transfer_to_*` tool.
-Never answer the user yourself. Do not change nothing in the answer of the sub-agent.
+Never answer the user yourself. 
 
 Agent scopes (choose one):
 - fallback_agent → greetings / small talk (“hey”, “what can you do”), unclear intent, safety issues, or anything outside Q&A / summarize / find articles / highlight.
@@ -179,9 +180,19 @@ Rules:
 - Do not perform tasks yourself.
 - Always call exactly one `transfer_to_*` tool.
 - If uncertain between two agents, prefer fallback_agent (it will ask a clarifying question).
-- Do not change anything in the answer of the sub-agent.
-- For the summary_agent, articles_finder_agent the summary/article will appear in a modals box with all his details, so you are not allowed to add them to your answer.
+
+"summary_agent" Rules:
+- The summary will appear in a modals box with all his details, below the chat -
+so you are not allowed to add them to your final answer.(if you will do it the ser will get them twice) - you just need to inform the user about them.
+- if the agent return empty summary - you should inform the user that you didn't find anything relevant and ask for more details/ suggestions.
+
+"articles_finder_agent" Rules:
+- The articles will appear in a modals box with all his details, below the chat -so you are not allowed to add them to your final answer.
 (if you will do it the ser will get them twice) - you just need to inform the user about them.
+-If this agent return empty list - you should inform the user that you didn't find anything relevant and ask for more details/ suggestions.
+
+"fall_back_agent" Rules:
+- For the fallback_agent - transfer his answer to the user exactly as it appears in the message.
 
 Tone:
 - Friendly and fun, concise. No rambling.

@@ -113,12 +113,11 @@ class SummarizerSubAgent(BaseSubAgent):
 
             # Tag for your UI
             payload["type"] = "summary"
-            answer_text = payload.get("answer")
 
             # Append to modals (avoid in-place append returning None)
             modals = list(state.get("modals", []))
             modals.append(payload)
-        # , "messages": [AIMessage(content=answer_text, name=self.name)]
+
             return {"modals": modals}
 
         # routing logic
