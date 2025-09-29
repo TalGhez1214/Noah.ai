@@ -111,14 +111,11 @@ class SummarizerSubAgent(BaseSubAgent):
             # Convert to dict safely
             payload = parsed.model_dump() if hasattr(parsed, "model_dump") else dict(parsed)
 
-            # Tag for your UI
-            payload["type"] = "summary"
-
             # Append to modals (avoid in-place append returning None)
             modals = list(state.get("modals", []))
             modals.append(payload)
 
-            return {"modals": modals}
+            return {"ui_payload": {"type": "summary", "data": modals}}
 
         # routing logic
         def should_continue(state: GraphState):

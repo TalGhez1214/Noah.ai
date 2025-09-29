@@ -1,13 +1,17 @@
 from typing import Optional
 from langgraph.graph import MessagesState
-
+from typing import Any, Optional, TypedDict
 
 # ---------- Custom Graph State for the Manager Agent ----------
+class UIPayload(TypedDict):
+    type: str            # e.g., "summary", "article", "highlight" etc.
+    data: Any            # the render-ready payload for your UI component
+
 class GraphState(MessagesState):
     user_query: Optional[str]
     current_page: Optional[dict] = None
     agent: Optional[str] = None
-    modals: Optional[list] = None  # List of modals
+    ui_payload: Optional[UIPayload] = None  
     
 # ---------- Sub-agent State----------
 class ReactAgentState(GraphState):

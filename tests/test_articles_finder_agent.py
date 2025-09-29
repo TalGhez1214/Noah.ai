@@ -85,6 +85,10 @@ def test_agent_answers(rag_retriever, user_query):
     assert isinstance(agent_answer["messages"][-1], AIMessage)
     assert isinstance(agent_answer["messages"][-1].content, str)
 
-    agent_answer["messages"][-1].pretty_print()
+    assert agent_answer["ui_payload"] is not None
+    assert agent_answer["ui_payload"]["data"][0]["quote"] != ""
+    assert agent_answer["ui_payload"]["data"][0]["summary"] != ""
+
+
     
 

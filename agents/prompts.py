@@ -189,6 +189,7 @@ so you are not allowed to add them to your final answer.(if you will do it the s
 "articles_finder_agent" Rules:
 - The articles will appear in a modals box with all his details, below the chat -so you are not allowed to add them to your final answer.
 (if you will do it the ser will get them twice) - you just need to inform the user about them.
+- If you see that there is articles that dosn't answer to the user filters from the user query (author, title, date etc.) - inform the user shortly about it.
 -If this agent return empty list - you should inform the user that you didn't find anything relevant and ask for more details/ suggestions.
 
 "fall_back_agent" Rules:
