@@ -30,6 +30,9 @@ def test_manager_initialization_smoke():
     tools = _tool_messages(msgs)
     assert tools[0]["name"] == "transfer_to_fallback_agent"
 
+    for m in msgs:
+        m.pretty_print()
+
 
 def test_routes_to_summary_agent():
     from agents.manager_agent.manager_agent import ManagerAgent
@@ -39,6 +42,8 @@ def test_routes_to_summary_agent():
     tools = _tool_messages(msgs)
     assert tools[0]["name"] == "transfer_to_summary_agent"
 
+    for m in msgs:
+        m.pretty_print()
 
 def test_routes_to_articles_finder_agent():
     from agents.manager_agent.manager_agent import ManagerAgent

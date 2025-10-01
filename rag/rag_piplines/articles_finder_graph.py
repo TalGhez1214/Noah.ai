@@ -37,6 +37,7 @@ from typing import Optional as Opt, List as Lst
 # Mongo / Embeddings / Reranker
 from pymongo import MongoClient
 from agents.manager_agent.mongo_client import MongoClientInstance
+from agents.manager_agent.agents_models import AGENTS_MODELS
 from sentence_transformers import CrossEncoder
 import numpy as np
 from openai import OpenAI
@@ -87,7 +88,7 @@ RECENCY_WEIGHT                   = float(os.getenv("RECENCY_WEIGHT", "0.25"))
 RECENCY_WEIGHT_WITH_TIMEFILTER   = float(os.getenv("RECENCY_WEIGHT_WITH_TIMEFILTER", "0.15"))
 
 # Embedding model + prefix config
-OPENAI_EMBED_MODEL  = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-large")  # 3072 dims
+OPENAI_EMBED_MODEL  = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-3-small")  # 1536 dims
 
 # ======================
 # STATE
@@ -115,7 +116,7 @@ class SearchState:
 # MODELS
 # ======================
 
-LLM = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+LLM = ChatOpenAI(model=AGENTS_MODELS["retriever"], temperature=0)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 CE  = CrossEncoder(CROSS_ENCODER_MODEL) if USE_CROSS_ENCODER else None
 
@@ -125,7 +126,7 @@ def _l2norm(v):
     return (v / (n + 1e-12)).tolist()
 
 def embed_query(text: str) -> list[float]:
-    resp = client.embeddings.create(model=OPENAI_EMBED_MODEL, input=[text])
+    resp = client.embeddings.create(model=AGENTS_MODELS["embeddings"], input=[text])
     return _l2norm(resp.data[0].embedding)
 
 # ======================

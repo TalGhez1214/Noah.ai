@@ -25,7 +25,7 @@ def user_query():
     Returns:
         str: A sample user query.
     """
-    return "give me articles about situation in Gaza?"
+    return "give me articles about AI?"
 
 # Test the initialization of the ArticalFinderAgent
 def test_artical_finder_agent_init(rag_retriever):
@@ -40,10 +40,8 @@ def test_structured_output(rag_retriever):
     llm_output = "This is a summary - I love chocolate. This is a key quote from the article you need to quote - 'amazing chocolate'."
     chain = agent.prompt | agent.parser_model
     structured_output = chain.invoke({"messages": [AIMessage(content=llm_output)],
-                                        "user_query": "",
-                                        "title": "",
-                                        "author": "",
-                                        "content": llm_output,
+                                      "user_query": "",
+                                        "article": llm_output,
                                         })
     # Convert to dict safely
     payload = structured_output.model_dump() if hasattr(structured_output, "model_dump") else dict(structured_output)
@@ -61,9 +59,7 @@ def test_structured_output_error_handling(rag_retriever):
     chain = agent.prompt | agent.parser_model
     structured_output = chain.invoke({"messages": [AIMessage(content=llm_output)],
                                         "user_query": "",
-                                        "title": "",
-                                        "author": "",
-                                        "content": llm_output,
+                                        "article": llm_output
                                         })
     # Convert to dict safely
     payload = structured_output.model_dump() if hasattr(structured_output, "model_dump") else dict(structured_output)

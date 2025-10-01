@@ -15,6 +15,7 @@ from agents.sub_agents.summarizer.summarizer_agent import SummarizerSubAgent
 from agents.sub_agents.article_finder.articles_finder_agent import ArticalFinderSubAgent
 from agents.sub_agents.fallback import FallbackSubAgent
 from agents.sub_agents.highlighter import HighlighterSubAgent
+from agents.manager_agent.agents_models import AGENTS_MODELS
 
 # ---- import search graph module ----
 import rag.rag_piplines.articles_finder_graph as M
@@ -49,11 +50,11 @@ class ManagerAgent:
         self.current_page = current_page
         
         ## Available sub-agents ##
-        self.qa_agent = QASubAgent(retriever=self.retriever, model="gpt-4o", prompt=qa_prompt)
-        self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=model, prompt=SUMMARY_PROMPT)
-        self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=model, prompt=article_finder_prompt)
-        self.fallback_agent = FallbackSubAgent(model=model, prompt=fallback_agent_prompt)
-        self.highlighter_agent = HighlighterSubAgent(model=model, prompt=HIGHLIGHTER_PROMPT)
+        self.qa_agent = QASubAgent(retriever=self.retriever, model=AGENTS_MODELS["qa"], prompt=qa_prompt)
+        self.article_summary_agent = SummarizerSubAgent(retriever=self.retriever, model=AGENTS_MODELS["summarizer"], prompt=SUMMARY_PROMPT)
+        self.articles_finder_agent = ArticalFinderSubAgent(retriever=self.retriever, model=AGENTS_MODELS["article_finder"], prompt=article_finder_prompt)
+        self.fallback_agent = FallbackSubAgent(model=AGENTS_MODELS["fallback"], prompt=fallback_agent_prompt)
+        self.highlighter_agent = HighlighterSubAgent(model=AGENTS_MODELS["highlighter"], prompt=HIGHLIGHTER_PROMPT)
 
         self._agents = [
                         self.qa_agent,
@@ -68,7 +69,7 @@ class ManagerAgent:
         )
 
         self._supervisor_agent = create_react_agent(
-                            model="openai:gpt-4.1",
+                            model=AGENTS_MODELS["supervisor"],
                             tools=self._tools,
                             prompt=SUPERVISOR_PROMPT,
                             name="supervisor",
