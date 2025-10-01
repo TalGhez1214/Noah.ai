@@ -115,7 +115,7 @@ class SummarizerSubAgent(BaseSubAgent):
             modals = list(state.get("modals", []))
             modals.append(payload)
 
-            return {"ui_payload": {"type": "summary", "data": modals}}
+            return {"ui_items": {"type": "summary", "data": modals}}
 
         # routing logic
         def should_continue(state: GraphState):

@@ -36,6 +36,7 @@ from typing import Optional as Opt, List as Lst
 
 # Mongo / Embeddings / Reranker
 from pymongo import MongoClient
+from agents.manager_agent.mongo_client import MongoClientInstance
 from sentence_transformers import CrossEncoder
 import numpy as np
 from openai import OpenAI
@@ -65,10 +66,10 @@ REQUESTED_K_DEFAULT         = int(os.getenv("REQUESTED_K", "10"))
 FUSION_WEIGHT_VECTOR        = float(os.getenv("FUSION_WEIGHT_VECTOR", "0.6"))
 FUSION_WEIGHT_TEXT          = float(os.getenv("FUSION_WEIGHT_TEXT",   "0.4"))
 RRF_K                       = int(os.getenv("RRF_K", "60"))
-VEC_NUM_CANDIDATES          = int(os.getenv("VEC_NUM_CANDIDATES", "2400"))
-VEC_LIMIT                   = int(os.getenv("VEC_LIMIT", "240"))
-FT_LIMIT                    = int(os.getenv("FT_LIMIT",  "240"))
-FUSION_LIMIT                = int(os.getenv("FUSION_LIMIT", "480"))
+VEC_NUM_CANDIDATES          = int(os.getenv("VEC_NUM_CANDIDATES", "800"))
+VEC_LIMIT                   = int(os.getenv("VEC_LIMIT", "80"))
+FT_LIMIT                    = int(os.getenv("FT_LIMIT",  "80"))
+FUSION_LIMIT                = int(os.getenv("FUSION_LIMIT", "120"))
 
 # Cross-encoder (optional + gated)
 USE_CROSS_ENCODER           = os.getenv("USE_CROSS_ENCODER", "1") not in ("0", "false", "False")
@@ -108,6 +109,7 @@ class SearchState:
     candidates: List[Dict[str, Any]] = field(default_factory=list)
     # final output
     top_results: List[Dict[str, Any]] = field(default_factory=list)
+    # Mongo client (lazy init)
 
 # ======================
 # MODELS
@@ -294,7 +296,7 @@ def _parse_iso_date(s: Optional[str]) -> Optional[datetime]:
         return None
 
 def validate_filters(state: SearchState) -> SearchState:
-    client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc); db = client[DB_NAME]
+    db = MongoClientInstance._db 
     warnings: List[str] = []
 
     authors = state.filters.get("author") or []
@@ -386,9 +388,7 @@ def _rrf_fuse(vec_docs, ft_docs, w_vec, w_ft, k):
     return fused
 
 def hybrid_retrieve_rankfusion(state: SearchState) -> SearchState:
-    client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc)
-    db = client[DB_NAME]
-    chunks = db[CHUNKS_COL]
+    chunks = MongoClientInstance._chunks
 
     qvec    = embed_query(state.semantic_query)
     vfilter = _vector_filter_doc(state.filters)
@@ -573,80 +573,33 @@ def _should_use_ce(state: SearchState) -> bool:
 # ======================
 
 def chunks_to_articles(state: SearchState) -> SearchState:
+    """
+    Input:  state.candidates = list of chunk candidates (each has article_id, score, etc.)
+    Output: state.candidates = one entry per article (best chunk wins), type=article
+    No DB calls.
+    """
     if not state.candidates:
         return state
 
-    client = MongoClient(MONGO_URI, tz_aware=True, tzinfo=timezone.utc)
-    db = client[DB_NAME]
-    chunks = db[CHUNKS_COL]
+    best_by_article = {}
+    for c in state.candidates:
+        aid = c.get("article_id")  # stringified ObjectId already
+        if not aid:
+            # keep chunk as-is if no article_id (rare), or drop it:
+            # best_by_article[f"__chunk__:{c.get('id')}"] = c
+            continue
 
-    # Reconstruct ObjectIds for $match (state.candidates store string ids)
-    ids_str = [c.get("id") for c in state.candidates if c.get("id")]
-    ids_oid = []
-    for s in ids_str:
-        try:
-            ids_oid.append(ObjectId(s))
-        except Exception:
-            pass
-
-    pipeline = [
-        {"$match": {"_id": {"$in": ids_oid}}},
-        {"$project": {
-            "_id": 1,
-            "article_id": 1,
-            "author": 1,
-            "title": 1,
-            "published_at": 1,
-            "url": 1,
-            "content_chunk": 1
-        }},
-        {"$lookup": {
-            "from": ARTICLES_COL,
-            "let": {"aid": "$article_id"},
-            "pipeline": [
-                {"$match": {"$expr": {"$eq": ["$_id", "$$aid"]}}},
-                {"$project": {
-                    "title": 1,
-                    "url": 1,
-                    "author": 1,
-                    "published_at": 1,
-                    "content": 1
-                }}
-            ],
-            "as": "article"
-        }},
-        {"$unwind": "$article"},
-        {"$project": {
-            "_id": 1,
-            "article_id": 1,
-            "content_chunk": 1,
-            "article_title": "$article.title",
-            "article_url": "$article.url",
-            "article_author": "$article.author",
-            "article_published_at": "$article.published_at",
-            "article_content": "$article.content"
-        }}
-    ]
-
-    docs = list(chunks.aggregate(pipeline))
-    score_map = {c["id"]: c["score"] for c in state.candidates}
-
-    best_by_article: Dict[Any, Dict[str, Any]] = {}
-    for d in docs:
-        cid = _sid(d["_id"])
-        aid = d["article_id"]  # still ObjectId here
-        sc = float(score_map.get(cid, 0.0))
         cur = best_by_article.get(aid)
-        if (cur is None) or (sc > cur["score"]):
+        if (cur is None) or (float(c.get("score", 0.0)) > float(cur.get("score", 0.0))):
+            # Convert this chunk candidate into an "article" shell without the "content" field (will added later for the final requested_k)
             best_by_article[aid] = {
-                "id": _sid(aid),  # stringify article id
+                "id": aid,
                 "type": "article",
-                "title": d.get("article_title") or d.get("chunk_title"),
-                "url": d.get("article_url"),
-                "author": d.get("article_author") or d.get("chunk_author"),
-                "published_at": _to_iso(d.get("article_published_at") or d.get("chunk_published_at")),
-                "content": d.get("article_content"),
-                "score": sc
+                "title": c.get("title"),
+                "author": c.get("author"),
+                "published_at": c.get("published_at"),
+                "url": c.get("url"),
+                "score": float(c.get("score", 0.0)),
             }
 
     state.candidates = list(best_by_article.values())
@@ -655,6 +608,50 @@ def chunks_to_articles(state: SearchState) -> SearchState:
 # ======================
 # RECENCY (generic)
 # ======================
+
+def fetch_full_content_for_top_k(state: SearchState) -> SearchState:
+    """
+    Fetch 'content' for the first K unique article ids in state.top_results,
+    and KEEP ONLY those that returned content. Order of the kept items is preserved.
+    """
+    if not state.top_results:
+        return state
+
+    K = state.requested_k or REQUESTED_K_DEFAULT
+    top_k = state.top_results[:K]
+
+    # Build ObjectId list in the same order (you said these are unique already)
+    ids = []
+    for a in top_k:
+        sid = a.get("id")
+        if not sid:
+            continue
+        try:
+            ids.append(ObjectId(sid))
+        except Exception:
+            # bad id → skip it
+            pass
+
+    if not ids:
+        # nothing to fetch; drop to empty since caller wants only-with-content
+        state.top_results = []
+        return state
+
+    # Single find, fetch only _id + content
+    articles_col = MongoClientInstance._articles
+    docs = list(articles_col.find({"_id": {"$in": ids}}, {"_id": 1, "content": 1}))
+    content_by_id = {str(d["_id"]): d.get("content") for d in docs}
+
+    # Keep only items that have non-None content; preserve original order
+    enriched = []
+    for a in top_k:
+        cid = a.get("id")
+        content = content_by_id.get(cid)
+        if content is not None:
+            enriched.append({**a, "content": content})
+
+    state.top_results = enriched
+    return state
 
 def _recency_weight_for(filters: Dict[str, Any]) -> float:
     return RECENCY_WEIGHT_WITH_TIMEFILTER if (filters.get("from") or filters.get("to")) else RECENCY_WEIGHT
@@ -688,6 +685,11 @@ def apply_recency(state: SearchState) -> SearchState:
 
     out.sort(key=lambda x: x["final_score"], reverse=True)
     state.top_results = out[:K]
+
+    if (state.file_type or "").strip().lower() == "article":
+        state = fetch_full_content_for_top_k(state)
+
+
     return state
 
 # ======================

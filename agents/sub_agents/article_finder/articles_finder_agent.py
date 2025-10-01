@@ -100,5 +100,5 @@ class ArticalFinderSubAgent(BaseSubAgent):
         return {
             "messages": [AIMessage(content=f"{relevant_articles}")], 
             "agent": "articles_finder",
-            "ui_payload": {"type": "articles","data": modals},
+            "ui_items": {"type": "articles","data": modals},
         }

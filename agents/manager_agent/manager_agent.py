@@ -16,7 +16,6 @@ from agents.sub_agents.article_finder.articles_finder_agent import ArticalFinder
 from agents.sub_agents.fallback import FallbackSubAgent
 from agents.sub_agents.highlighter import HighlighterSubAgent
 
-
 # ---- import search graph module ----
 import rag.rag_piplines.articles_finder_graph as M
 

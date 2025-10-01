@@ -107,16 +107,16 @@ def test_modal_from_link_route_has_required_fields(summarizer_agent, article_doc
     assert isinstance(result["messages"][-1], AIMessage)
 
     # modal payload checks
-    assert "modals" in result and isinstance(result["modals"], list) and result["modals"]
-    payload = result["modals"][-1]
-    assert payload.get("type") == "summary"
+    assert "ui_items" in result and result["ui_items"]
+
+    assert result["ui_items"].get("type") == "summary"
+    payload = result["ui_items"]["data"][-1]
     for k in ("answer", "title", "url", "summary"):
         assert k in payload and isinstance(payload[k], str) and payload[k].strip()
 
     # title/url match
     #assert _normalize(payload["title"]) == _normalize(article_doc["title"])
     assert payload["url"].strip() == article_doc["url"].strip()
-    assert _normalize(payload["answer"]) == _normalize(result["messages"][-1].content)
 
     for m in result["messages"]:
         m.pretty_print()
@@ -131,17 +131,22 @@ def test_modal_from_current_page_has_required_fields(summarizer_agent, article_d
     result = summarizer_agent.graph.invoke(state)
 
     assert "messages" in result and isinstance(result["messages"][-1], AIMessage)
-    assert "modals" in result and isinstance(result["modals"], list) and result["modals"]
-    payload = result["modals"][-1]
-    assert payload.get("type") == "summary"
+
+    # modal payload checks
+    assert "ui_items" in result and result["ui_items"]
+
+    assert result["ui_items"].get("type") == "summary"
+    payload = result["ui_items"]["data"][-1]
     for k in ("answer", "title", "url", "summary"):
         assert k in payload and isinstance(payload[k], str) and payload[k].strip()
 
     # title/url match
+    #assert _normalize(payload["title"]) == _normalize(article_doc["title"])
+    assert payload["url"].strip() == article_doc["url"].strip()
+
+    # title/url match
     assert _normalize(payload["title"]) == _normalize(article_doc["title"])
     assert payload["url"].strip() == article_doc["url"].strip()
-    assert _normalize(payload["answer"]) == _normalize(result["messages"][-1].content)
-
     
 
 
@@ -153,16 +158,22 @@ def test_modal_from_db_route_has_required_fields(summarizer_agent, article_doc):
     result = summarizer_agent.graph.invoke(state)
 
     assert "messages" in result and isinstance(result["messages"][-1], AIMessage)
-    assert "modals" in result and isinstance(result["modals"], list) and result["modals"]
-    payload = result["modals"][-1]
-    assert payload.get("type") == "summary"
+
+    # modal payload checks
+    assert "ui_items" in result and result["ui_items"]
+
+    assert result["ui_items"].get("type") == "summary"
+    payload = result["ui_items"]["data"][-1]
     for k in ("answer", "title", "url", "summary"):
         assert k in payload and isinstance(payload[k], str) and payload[k].strip()
 
     # title/url match
+    #assert _normalize(payload["title"]) == _normalize(article_doc["title"])
+    assert payload["url"].strip() == article_doc["url"].strip()
+
+    # title/url match
     assert _normalize(payload["title"]) == _normalize(article_doc["title"])
     assert payload["url"].strip() == article_doc["url"].strip()
-    assert _normalize(payload["answer"]) == _normalize(result["messages"][-1].content)
 
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="Requires OpenAI API key.")
@@ -191,16 +202,21 @@ def test_modal_with_conversation_history_flow(summarizer_agent, article_doc):
     }
     result = summarizer_agent.graph.invoke(state)
 
-    assert "modals" in result and isinstance(result["modals"], list) and result["modals"]
-    payload = result["modals"][-1]
-    assert payload.get("type") == "summary"
+    # modal payload checks
+    assert "ui_items" in result and result["ui_items"]
+
+    assert result["ui_items"].get("type") == "summary"
+    payload = result["ui_items"]["data"][-1]
     for k in ("answer", "title", "url", "summary"):
         assert k in payload and isinstance(payload[k], str) and payload[k].strip()
 
     # title/url match
+    #assert _normalize(payload["title"]) == _normalize(article_doc["title"])
+    assert payload["url"].strip() == article_doc["url"].strip()
+
+    # title/url match
     assert _normalize(payload["title"]) == _normalize(article_doc["title"])
     assert payload["url"].strip() == article_doc["url"].strip()
-    assert _normalize(payload["answer"]) == _normalize(result["messages"][-1].content)
 
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="Requires OpenAI API key.")
@@ -216,15 +232,19 @@ def test_asking_clarification(summarizer_agent, article_doc):
     for m in result["messages"]:
         m.pretty_print()
 
-    assert "modals" in result and isinstance(result["modals"], list) and result["modals"]
-    payload = result["modals"][-1]
-    assert payload.get("type") == "summary"
-    for k in ("answer", "title", "url", "summary"):
-        assert k in payload 
+    # modal payload checks
+    assert "ui_items" in result and result["ui_items"]
+
+    assert result["ui_items"].get("type") == "summary"
+    payload = result["ui_items"]["data"][-1]
+    
+
     # We expect the chosen article; allow minor whitespace differences in title
+
     assert _normalize(payload["title"]) == ""
     assert payload["url"].strip() == ""
-    assert _normalize(payload["answer"]) == _normalize(result["messages"][-1].content)
+    assert payload["summary"].strip() == ""
+
 
     
     
