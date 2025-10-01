@@ -9,6 +9,8 @@ from ..base import BaseSubAgent
 from typing import Any, Dict, Optional
 from pydantic import BaseModel, Field
 from agents.sub_agents.article_finder.prompts import AGENT_PROMPT
+import rag.rag_piplines.articles_finder_graph as M
+
 
 # ---------- Structured Output ----------
 class RespondFormat(BaseModel):
@@ -43,7 +45,7 @@ class ArticalFinderSubAgent(BaseSubAgent):
         
         self.name = "articles_finder_agent"
         self.description = "This agent finds the most relevant articles for the user query"
-        self.retriever = retriever
+        self.retriever = M.build_graph()
 
         self.prompt = ChatPromptTemplate.from_messages([
             ("system", AGENT_PROMPT),
@@ -65,10 +67,11 @@ class ArticalFinderSubAgent(BaseSubAgent):
             "Key Quote": "Key Quote from the article",
         }
         """
+        M.REQUESTED_K_DEFAULT = 5  # Number of articles to retrieve
+
         retrieve_state = {
             "messages": state.get("messages", []),
             "user_query": state.get("user_query", ""),
-            "requested_k": 5,  # Number of articles to retrieve
         }
         articles = self.retriever.invoke(retrieve_state).get("top_results", [])
         modals = []

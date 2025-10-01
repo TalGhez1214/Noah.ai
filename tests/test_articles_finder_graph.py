@@ -97,7 +97,7 @@ def test_llm_graph_basic_topic():
     client = _mongo()
     _skip_if_no_chunks(client)
 
-    user_query = "I want articles about AI."
+    user_query = "Find me articles about AI."
     result = _run_graph(user_query)
 
     print(f"user_query: {user_query}")

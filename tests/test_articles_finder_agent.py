@@ -25,7 +25,7 @@ def user_query():
     Returns:
         str: A sample user query.
     """
-    return "give me articles about AI?"
+    return "Find me articles about AI?"
 
 # Test the initialization of the ArticalFinderAgent
 def test_artical_finder_agent_init(rag_retriever):
@@ -85,6 +85,8 @@ def test_agent_answers(rag_retriever, user_query):
     assert agent_answer["ui_items"]["type"] == "articles"
     assert agent_answer["ui_items"]["data"][0]["quote"] != ""
     assert agent_answer["ui_items"]["data"][0]["summary"] != ""
+
+    assert len(agent_answer["ui_items"]["data"]) <= 5  # We requested top 5 articles
 
 
     
