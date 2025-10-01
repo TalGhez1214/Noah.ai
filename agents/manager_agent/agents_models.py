@@ -1,10 +1,10 @@
 AGENTS_MODELS = {
-  "supervisor": "openai:gpt-4o",
-  "article_finder": "gpt-5-nano-2025-08-07",
-  "summarizer": "gpt-5-nano-2025-08-07",
-  "qa": "gpt-5-mini-2025-08-07",
-  "fallback": "gpt-5-mini-2025-08-07",
-  "retriever": "gpt-5-nano-2025-08-07",
-  "highlighter": "gpt-5-nano-2025-08-07",
+  "supervisor": "openai:gpt-4.1",
+  "article_finder": "gpt-4o",
+  "summarizer": "gpt-4o",
+  "qa": "gpt-4o",
+  "fallback": "gpt-4o",
+  "retriever": "gpt-4o",
+  "highlighter": "gpt-4o",
   "embeddings": "text-embedding-3-small",
 }

@@ -168,10 +168,6 @@ def test_modal_from_db_route_has_required_fields(summarizer_agent, article_doc):
         assert k in payload and isinstance(payload[k], str) and payload[k].strip()
 
     # title/url match
-    #assert _normalize(payload["title"]) == _normalize(article_doc["title"])
-    assert payload["url"].strip() == article_doc["url"].strip()
-
-    # title/url match
     assert _normalize(payload["title"]) == _normalize(article_doc["title"])
 
 
@@ -210,13 +206,10 @@ def test_modal_with_conversation_history_flow(summarizer_agent, article_doc):
     for k in ("answer", "title", "url", "summary"):
         assert k in payload and isinstance(payload[k], str) and payload[k].strip()
 
-    # title/url match
-    #assert _normalize(payload["title"]) == _normalize(article_doc["title"])
-    assert payload["url"].strip() == article_doc["url"].strip()
 
     # title/url match
     assert _normalize(payload["title"]) == _normalize(article_doc["title"])
-    assert payload["url"].strip() == article_doc["url"].strip()
+
 
 
 @pytest.mark.skipif(not os.getenv("OPENAI_API_KEY"), reason="Requires OpenAI API key.")

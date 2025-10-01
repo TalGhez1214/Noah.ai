@@ -93,7 +93,7 @@ def test_followup_summarize_after_results_routes_to_summary():
     Turn 2: 'Summarize the first one' → route to summary_agent.
     """
     from agents.manager_agent.manager_agent import ManagerAgent
-    mgr = ManagerAgent(user_query="Find list of articles about GPUs", user_id="u-follow2")
+    mgr = ManagerAgent(user_query="Find list of articles about AI", user_id="u-follow2")
     msgs1 = mgr.chat()
 
     tools1 = _tool_messages(msgs1)
