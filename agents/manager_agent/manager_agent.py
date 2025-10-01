@@ -79,9 +79,15 @@ class ManagerAgent:
 
         # nodes
         # Add the supervisor with visual destinations (Studio-only)
+
         graph.add_node(
             "supervisor",
-            self._supervisor_agent,
+            self._supervisor_agent.with_config(
+                run_name="supervisor",
+                tags=["node:supervisor"],
+                metadata={"langgraph_node": "supervisor"},
+                langgraph_node="supervisor",
+            ),
             destinations=(
                 self.qa_agent.name,
                 self.article_summary_agent.name,

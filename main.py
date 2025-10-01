@@ -13,6 +13,12 @@ from motor.motor_asyncio import AsyncIOMotorClient
 from bson import ObjectId
 from slugify import slugify
 
+import asyncio
+from fastapi.responses import StreamingResponse
+from langchain_core.messages import AIMessage
+import json
+
+
 # --- Load env (.env) ---
 load_dotenv()
 
@@ -346,71 +352,143 @@ async def ask_user(request: AskRequest):
     return AskResponse(result=last_ai)
 
 
-import asyncio
-from fastapi.responses import StreamingResponse
-from langchain_core.messages import AIMessage
+# @app.post("/ask_stream")
+# async def ask_user_stream(request: AskRequest):
+#     """
+#     Stream assistant output token-by-token (or chunk-by-chunk).
+#     Uses LangGraph astream_events if available. Falls back to
+#     one-shot invoke + word streaming if needed.
+#     """
+#     async def token_generator():
+#         # ---- Resolve current page doc exactly as in /ask ----
+#         current_doc = await _find_doc_for_page(request.page_url)
+#         current_doc = _slim_doc(current_doc)
+#         current_doc = _sanitize_for_state(current_doc)
 
+#         user_id = "123"
+#         manager = ManagerAgent(
+#             user_query=request.query,
+#             user_id=user_id,
+#             current_page=current_doc,
+#         )
+
+#         thread = {"configurable": {"thread_id": user_id}}
+#         graph_state = {
+#             "messages": [HumanMessage(content=request.query)],
+#             "user_query": request.query,
+#             "agent": None,
+#             "current_page": current_doc,
+#         }
+
+#         # ---- Preferred: stream events from LangGraph ----
+#         streamed_any = False
+#         try:
+#             # v2 event stream yields granular events; we forward model deltas
+#             async for ev in manager.app.astream_events(graph_state, thread, version="v2"):
+#                 # Most LLMs emit `on_chat_model_stream` with a small delta
+#                 if ev.get("event") == "on_chat_model_stream":
+#                     chunk = ev.get("data", {}).get("chunk")
+#                     if chunk and isinstance(chunk, AIMessage):
+#                         text = chunk.content or ""
+#                     else:
+#                         # Newer LC emits `.content` directly
+#                         text = (ev.get("data", {}).get("chunk", {}).get("content") or "")
+#                     if text:
+#                         streamed_any = True
+#                         # plain text chunks (no SSE) – easy for fetch streaming
+#                         yield text
+#                 # Optional: you can also handle tool messages here if you’d like
+#         except Exception as e:
+#             # If event streaming not supported / model doesn’t stream – fall back
+#             pass
+
+#         if not streamed_any:
+#             # ---- Fallback: one-shot invoke, then fake streaming by words ----
+#             updated = manager.app.invoke(graph_state, thread)
+#             final_text = next(
+#                 (m.content for m in reversed(updated["messages"]) if isinstance(m, AIMessage)),
+#                 "..."
+#             )
+#             # stream “typing” by words
+#             for word in final_text.split(" "):
+#                 yield (word + " ")
+#                 await asyncio.sleep(0.015)  # feel free to adjust typing speed
+
+#     return StreamingResponse(token_generator(), media_type="text/plain; charset=utf-8")
+
+
+def ndjson(obj: dict) -> bytes:
+    return (json.dumps(obj, ensure_ascii=False) + "\n").encode("utf-8")
 
 @app.post("/ask_stream")
-async def ask_user_stream(request: AskRequest):
-    """
-    Stream assistant output token-by-token (or chunk-by-chunk).
-    Uses LangGraph astream_events if available. Falls back to
-    one-shot invoke + word streaming if needed.
-    """
-    async def token_generator():
-        # ---- Resolve current page doc exactly as in /ask ----
-        current_doc = await _find_doc_for_page(request.page_url)
-        current_doc = _slim_doc(current_doc)
-        current_doc = _sanitize_for_state(current_doc)
+async def ask_stream(req: AskRequest):
+    current_doc = await _find_doc_for_page(req.page_url)
+    current_doc = _sanitize_for_state(_slim_doc(current_doc))
+    user_id = "123"
 
-        user_id = "123"
+    async def gen():
         manager = ManagerAgent(
-            user_query=request.query,
+            user_query=req.query,
             user_id=user_id,
             current_page=current_doc,
+            use_checkpointer=True,
         )
 
-        thread = {"configurable": {"thread_id": user_id}}
-        graph_state = {
-            "messages": [HumanMessage(content=request.query)],
-            "user_query": request.query,
-            "agent": None,
-            "current_page": current_doc,
-        }
+        last_state = None
 
-        # ---- Preferred: stream events from LangGraph ----
-        streamed_any = False
-        try:
-            # v2 event stream yields granular events; we forward model deltas
-            async for ev in manager.app.astream_events(graph_state, thread, version="v2"):
-                # Most LLMs emit `on_chat_model_stream` with a small delta
-                if ev.get("event") == "on_chat_model_stream":
-                    chunk = ev.get("data", {}).get("chunk")
-                    if chunk and isinstance(chunk, AIMessage):
-                        text = chunk.content or ""
-                    else:
-                        # Newer LC emits `.content` directly
-                        text = (ev.get("data", {}).get("chunk", {}).get("content") or "")
-                    if text:
-                        streamed_any = True
-                        # plain text chunks (no SSE) – easy for fetch streaming
-                        yield text
-                # Optional: you can also handle tool messages here if you’d like
-        except Exception as e:
-            # If event streaming not supported / model doesn’t stream – fall back
-            pass
+        async for event in manager.app.astream_events(
+            {
+                "messages": [HumanMessage(content=req.query)],
+                "user_query": req.query,
+                "agent": None,
+                "current_page": current_doc,
+            },
+            config={"configurable": {"thread_id": user_id}},
+            version="v2",
+        ):
+            ev = event.get("event")
+            data = event.get("data", {})
+            tags = event.get("tags", []) or []
 
-        if not streamed_any:
-            # ---- Fallback: one-shot invoke, then fake streaming by words ----
-            updated = manager.app.invoke(graph_state, thread)
-            final_text = next(
-                (m.content for m in reversed(updated["messages"]) if isinstance(m, AIMessage)),
-                "..."
+            # ✅ STREAM ONLY SUPERVISOR TEXT
+            if ev == "on_chat_model_stream" and "node:supervisor" in tags:
+                ch = data.get("chunk")
+                if ch and getattr(ch, "content", ""):
+                    yield ndjson({"type": "token", "data": ch.content})
+
+            # track a possible final state when it appears
+            if ev in ("on_chain_end", "on_graph_end", "on_tool_end"):
+                out = data.get("output")
+                if isinstance(out, dict):
+                    last_state = out
+
+        # Fallback: if we didn't capture state from events, run once to get it
+        if last_state is None:
+            last_state = await manager.app.ainvoke(
+                {
+                    "messages": [HumanMessage(content=req.query)],
+                    "user_query": req.query,
+                    "agent": None,
+                    "current_page": current_doc,
+                },
+                config={"configurable": {"thread_id": user_id}},
             )
-            # stream “typing” by words
-            for word in final_text.split(" "):
-                yield (word + " ")
-                await asyncio.sleep(0.015)  # feel free to adjust typing speed
+        
+        msgs = last_state.get("messages", [])
+        print("\n🗨️ Full conversation (including tool messages):")
+        for m in msgs:
+            try:
+                if hasattr(m, "pretty_print"):
+                    m.pretty_print()          # LangChain-native messages
+                else:
+                    print("TOOL/RAW:", m)      # Fallback for dicts / custom payloads
+            except Exception as e:
+                print("<<could not render message>>", type(m), m, e)
 
-    return StreamingResponse(token_generator(), media_type="text/plain; charset=utf-8")
+        # Send non-streamed modals (or any UI payload you carry)
+        if isinstance(last_state, dict) and last_state.get("ui_items") is not None:
+            yield ndjson({"type": "ui_items", "data": last_state["ui_items"]})
+
+        yield ndjson({"type": "done"})
+
+    return StreamingResponse(gen(), media_type="application/x-ndjson")
