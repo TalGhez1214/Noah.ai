@@ -17,6 +17,8 @@ import asyncio
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage
 import json
+from agents.inline_agents.explainer import ExplainerAgent
+from typing import AsyncIterator
 
 
 # --- Load env (.env) ---
@@ -226,7 +228,7 @@ from agents.manager_agent.manager_agent import ManagerAgent  # keep your import
 
 class AskRequest(BaseModel):
     query: str
-    page_url: Optional[str] = None  # ✅ NEW: current page URL from the client
+    page_url: Optional[str] = None 
 
 class AskResponse(BaseModel):
     result: str
@@ -362,6 +364,7 @@ async def ask_stream(req: AskRequest):
     user_id = "123"
 
     async def gen():
+        
         manager = ManagerAgent(
             user_query=req.query,
             user_id=user_id,
@@ -427,3 +430,71 @@ async def ask_stream(req: AskRequest):
         yield ndjson({"type": "done"})
 
     return StreamingResponse(gen(), media_type="application/x-ndjson")
+
+
+
+class InlineExplainRequest(BaseModel):
+    highlighted_text: str
+    page_url: Optional[str] = None
+
+class InlineExplainResponse(BaseModel):
+    result: str
+
+
+@app.post("/inline_explain")
+async def inline_explain(req: InlineExplainRequest):
+    """
+    Streams ONLY text tokens (no JSON framing), same pattern as ask_stream.
+    """
+    # 1) Resolve page content from your DB (like ask_stream)
+    doc = await _find_doc_for_page(req.page_url)
+    page_content = (
+        (doc.get("content")
+         or doc.get("page_content")
+         or doc.get("text")
+         or doc.get("body")
+         or "")
+        if doc else ""
+    ).strip()
+
+    # 2) Build the inline agent (stand-alone)
+    explainer = ExplainerAgent(model="gpt-4o-mini", temperature=0.2)
+
+    # 3) Prepare state + config for astream_events
+    human = HumanMessage(content="Explain the highlighted selection in context.")
+    state = {"messages": [human]}
+    config = {
+        "configurable": {
+            "thread_id": "inline-explain",   # swap to real user/session id if you have one
+            "current_page_content": page_content,
+            "highlighted_text": req.highlighted_text,
+            "today": __import__("datetime").date.today().isoformat(),
+        }
+    }
+
+    async def event_stream() -> AsyncIterator[bytes]:
+        # NOTE: We stream ONLY the chat model token chunks (plain text)
+        async for ev in explainer.app.astream_events(
+            state,
+            config=config,
+            version="v1",
+        ):
+            # Token stream from the model
+            if ev["event"] == "on_chat_model_stream":
+                chunk = ev["data"].get("chunk")
+                if chunk:
+                    # chunk.content can be a string or a list of TextChunks; join safely
+                    try:
+                        text = "".join(getattr(c, "text", "") for c in chunk.content) if hasattr(chunk, "content") else str(chunk)
+                    except Exception:
+                        text = getattr(chunk, "content", "") or getattr(chunk, "text", "") or ""
+                    if text:
+                        yield text.encode("utf-8")
+            # (Optional) If you want to surface tool results inline, handle
+            # `on_tool_end` here and yield a short note/text.
+
+        # Final newline so the client knows we're done
+        yield b"\n"
+
+    # 4) Return a plain-text stream (frontend reads it as a text stream)
+    return StreamingResponse(event_stream(), media_type="text/plain; charset=utf-8")
