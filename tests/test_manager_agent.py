@@ -4,7 +4,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 
 # We patch inside the module where ManagerAgent is defined
 import agents.manager_agent.manager_agent as manager_mod
-
+from agents.manager_agent.GraphStates import LAST_TURNS, LAST_MSGS
 
 # ---------- Helpers ----------
 
@@ -135,4 +135,39 @@ def test_routes_to_qa_agent_for_general_qna_not_summary_or_find():
 
     tools = _tool_messages(msgs)
     assert tools[0]["name"] == "transfer_to_qa_agent"
+
+
+def test_msgs_window_capping():
+    from agents.manager_agent.manager_agent import ManagerAgent
+
+    mgr = ManagerAgent(user_query="Hello", user_id="123")  # uses MemorySaver by default
+    msgs = mgr.chat()
+
+    # Drive more turns than the cap (LAST_TURNS ~ pairs of Human+AI)
+    extra_turns = 2
+    total_turns = LAST_TURNS + extra_turns
+
+    for i in range(total_turns):
+        mgr.user_query = f"Follow-up {i}"
+        msgs = mgr.chat()
+
+        # 1) The reducer must never allow more than LAST_MSGS messages
+        assert len(msgs) <= LAST_MSGS, f"Window overflow: got {len(msgs)} > {LAST_MSGS}"
+
+    # 2) After exceeding the window, we should be *exactly* at the cap
+    assert len(msgs) == LAST_MSGS, f"Expected exact cap {LAST_MSGS} after many turns, got {len(msgs)}"
+
+    # 3) Latest human message is present
+    assert any(
+        isinstance(m, HumanMessage) and m.content == f"Follow-up {total_turns-1}"
+        for m in msgs
+    ), "Latest human message missing from the trimmed window"
+
+    # 4) Earliest human message (“Hello”) is gone once the cap is exceeded
+    assert not any(
+        isinstance(m, HumanMessage) and m.content == "Hello"
+        for m in msgs
+    ), "Oldest message survived trimming; the window is not sliding properly"
+
+
 
