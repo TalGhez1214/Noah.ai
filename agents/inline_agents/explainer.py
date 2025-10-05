@@ -44,7 +44,7 @@ class ExplainerAgent:
         self.app = create_react_agent(
             model=self.llm,
             tools=self.tools,
-            prompt=qa_prompt,  # from agents/inline_agents/propmts.py
+            prompt=explainer_prompt,  # from agents/inline_agents/propmts.py
             name="explainer",
         )
 

@@ -3,8 +3,9 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 from datetime import date
 from langchain_core.messages import SystemMessage, BaseMessage
+from langchain_core.runnables import RunnableConfig
 
-def explainer_prompt(state: Dict[str, Any], config: Optional[Dict[str, Any]] = None) -> List[BaseMessage]:
+def explainer_prompt(state: Dict[str, Any], config: RunnableConfig) -> List[BaseMessage]:
     """
     Prompt for the inline Explainer agent.
     Ground the explanation in the CURRENT PAGE CONTENT and the HIGHLIGHTED TEXT.
