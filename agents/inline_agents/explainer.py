@@ -13,7 +13,8 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 # If your project already uses `langchain_tavily`, swap the import to:
 # from langchain_tavily import TavilySearch as TavilySearchResults
 
-from .propmts import explainer_prompt
+from agents.inline_agents.prompts import explainer_prompt
+from agents.prompts import qa_prompt
 
 
 class ExplainerAgent:
@@ -43,7 +44,7 @@ class ExplainerAgent:
         self.app = create_react_agent(
             model=self.llm,
             tools=self.tools,
-            prompt=explainer_prompt,  # from agents/inline_agents/propmts.py
+            prompt=qa_prompt,  # from agents/inline_agents/propmts.py
             name="explainer",
         )
 
@@ -59,10 +60,8 @@ class ExplainerAgent:
             state,
             config={
                 "configurable": {
-                    "thread_id": thread_id or "explainer-thread",
                     "current_page_content": current_page_content or "",
-                    "highlighted_text": highlighted_text or "",
-                    "today": date.today().isoformat(),
+                    "highlighted_text": highlighted_text or ""
                 }
             },
         )

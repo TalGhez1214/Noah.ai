@@ -441,60 +441,225 @@ class InlineExplainResponse(BaseModel):
     result: str
 
 
-@app.post("/inline_explain")
+# main.py (endpoint replacement — same behavior, now with pretty print)
+
+from fastapi.responses import StreamingResponse
+from typing import AsyncIterator
+from langchain_core.messages import HumanMessage, AIMessage
+from agents.inline_agents.explainer import ExplainerAgent
+from pydantic import BaseModel
+
+class InlineExplainRequest(BaseModel):
+    highlighted_text: str
+    page_url: str
+
+# @app.post("/inline_explain")
+# async def inline_explain(req: InlineExplainRequest):
+#     """
+#     Streams ONLY text tokens (no JSON framing), and pretty-prints the full
+#     conversation (like ask_stream) after completion.
+#     """
+#     # Resolve page content via your helper (same style as ask_stream)
+#     current_doc = await _find_doc_for_page(req.page_url)
+
+#     # Try to extract content (keep this permissive; no other changes)
+#     page_content = (
+#         (current_doc.get("content")
+#          or current_doc.get("page_content")
+#          or current_doc.get("text")
+#          or current_doc.get("body")
+#          or "")
+#         if current_doc else ""
+#     ).strip()
+
+#     explainer = ExplainerAgent(model="gpt-4o-mini", temperature=0.2)
+
+#     human = HumanMessage(content="Explain the highlighted selection in context.")
+#     state = {"messages": [human]}
+#     config = {
+#         "configurable": {
+#             "thread_id": "inline-explain",
+#             "current_page_content": page_content,
+#             "highlighted_text": req.highlighted_text,
+#             "today": __import__("datetime").date.today().isoformat(),
+#         }
+#     }
+
+#     async def event_stream() -> AsyncIterator[bytes]:
+#         last_state = None
+
+#         # Stream ONLY chat model token chunks as plain text
+#         async for ev in explainer.app.astream_events(
+#             state,
+#             config=config,
+#             version="v2",
+#         ):
+#             event_name = ev.get("event")
+#             data = ev.get("data", {})
+
+#             if event_name == "on_chat_model_stream":
+#                 ch = data.get("chunk")
+#                 if ch:
+#                     try:
+#                         text = "".join(getattr(c, "text", "") for c in getattr(ch, "content", []))
+#                     except Exception:
+#                         text = getattr(ch, "content", "") or getattr(ch, "text", "") or ""
+#                     if text:
+#                         yield text.encode("utf-8")
+
+#             # Track final state when available (for pretty print)
+#             if event_name in ("on_chain_end", "on_graph_end", "on_tool_end"):
+#                 out = data.get("output")
+#                 if isinstance(out, dict):
+#                     last_state = out
+
+#         # Fallback: if we didn’t capture state from events, run once to get it
+#         if last_state is None:
+#             last_state = await explainer.app.ainvoke(state, config=config)
+
+#         # === Pretty print (identical style to your ask_stream) ===
+#         msgs = (last_state or {}).get("messages", [])
+#         print("\n🗨️ Full conversation (including tool messages):")
+#         for m in msgs:
+#             try:
+#                 if hasattr(m, "pretty_print"):
+#                     m.pretty_print()           # LangChain-native messages
+#                 else:
+#                     print("TOOL/RAW:", m)       # Fallback for dicts / custom payloads
+#             except Exception as e:
+#                 print("<<could not render message>>", type(m), m, e)
+
+#         # Final newline so clients know we’re done
+#         yield b"\n"
+
+#     return StreamingResponse(event_stream(), media_type="text/plain; charset=utf-8")
+
+
+
+
+
+
+
+
+# @app.post("/inline_explain")
+# async def inline_explain(req: InlineExplainRequest):
+#     """
+#     Streams ONLY text tokens (no JSON framing), and pretty-prints the full
+#     conversation after completion (same style as ask_stream).
+#     """
+#     # Resolve current doc via your helper (like ask_stream)
+#     current_doc = await _find_doc_for_page(req.page_url)
+#     page_content = current_doc.get("content", "") or ""
+
+#     explainer = ExplainerAgent(model="gpt-4o-mini", temperature=0.2)
+
+#     # ✅ Put the selection directly in the user message as a fallback
+#     human = HumanMessage(
+#         content=f'Explain this selection in the context of the current page:\n""" {req.highlighted_text} """'
+#     )
+#     state = {"messages": [human]}
+#     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+#     print(page_content)
+#     print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+
+#     # ✅ And pass it via config (what your prompt actually reads)
+#     config = {
+#         "configurable": {
+#             "thread_id": "inline-explain",
+#             "current_page_content": page_content,
+#             "highlighted_text": req.highlighted_text,   # <-- IMPORTANT
+#             "today": __import__("datetime").date.today().isoformat(),
+#         }
+#     }
+
+#     # Quick debug so you can see it's coming through
+#     #print("[inline_explain] highlighted_len:", len(req.highlighted_text), "| page_has_content:", bool(page_content))
+
+#     async def event_stream():
+#         last_state = None
+
+#         # ✅ Use v2 like your ask_stream (v1 won’t emit the token event you’re handling)
+#         async for ev in explainer.app.astream_events(
+#             state,
+#             config=config,
+#             version="v2",
+#         ):
+#             event_name = ev.get("event")
+#             data = ev.get("data", {})
+
+#             if event_name == "on_chat_model_stream":
+#                 ch = data.get("chunk")
+#                 if ch:
+#                     try:
+#                         text = "".join(getattr(c, "text", "") for c in getattr(ch, "content", []))
+#                     except Exception:
+#                         text = getattr(ch, "content", "") or getattr(ch, "text", "") or ""
+#                     if text:
+#                         yield text.encode("utf-8")
+
+#             # Track final graph/chain/tool output so we can pretty-print after
+#             if event_name in ("on_chain_end", "on_graph_end", "on_tool_end"):
+#                 out = data.get("output")
+#                 if isinstance(out, dict):
+#                     last_state = out
+
+#         # Fallback: fetch final state if we didn’t capture it during streaming
+#         if last_state is None:
+#             last_state = await explainer.app.ainvoke(state, config=config)
+
+#         # === Pretty print (same pattern you use in ask_stream) ===
+#         msgs = (last_state or {}).get("messages", [])
+#         print("\n🗨️ Full conversation (including tool messages):")
+#         for m in msgs:
+#             try:
+#                 if hasattr(m, "pretty_print"):
+#                     m.pretty_print()
+#                 else:
+#                     print("TOOL/RAW:", m)
+#             except Exception as e:
+#                 print("<<could not render message>>", type(m), m, e)
+
+#         yield b"\n"
+
+#     return StreamingResponse(event_stream(), media_type="text/plain; charset=utf-8")
+
+
+
+@app.post("/inline_explain", response_model=InlineExplainResponse)
 async def inline_explain(req: InlineExplainRequest):
-    """
-    Streams ONLY text tokens (no JSON framing), same pattern as ask_stream.
-    """
-    # 1) Resolve page content from your DB (like ask_stream)
-    doc = await _find_doc_for_page(req.page_url)
+    # get the page doc like you do elsewhere
+    current_doc = await _find_doc_for_page(req.page_url)
     page_content = (
-        (doc.get("content")
-         or doc.get("page_content")
-         or doc.get("text")
-         or doc.get("body")
+        (current_doc.get("content")
+         or current_doc.get("page_content")
+         or current_doc.get("text")
+         or current_doc.get("body")
          or "")
-        if doc else ""
+        if current_doc else ""
     ).strip()
 
-    # 2) Build the inline agent (stand-alone)
     explainer = ExplainerAgent(model="gpt-4o-mini", temperature=0.2)
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+    print("[inline_explain] highlighted_len:", req.highlighted_text, "| page_has_content:", page_content)
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+    
+    # invoke via the agent's call() (no astream_events)
+    msgs = explainer.call(
+        highlighted_text=req.highlighted_text,
+        current_page_content=page_content,
+        thread_id="inline-explain",
+    )
 
-    # 3) Prepare state + config for astream_events
-    human = HumanMessage(content="Explain the highlighted selection in context.")
-    state = {"messages": [human]}
-    config = {
-        "configurable": {
-            "thread_id": "inline-explain",   # swap to real user/session id if you have one
-            "current_page_content": page_content,
-            "highlighted_text": req.highlighted_text,
-            "today": __import__("datetime").date.today().isoformat(),
-        }
-    }
+    # pretty print (kept, since you liked it)
+    print("\n🗨️ Full conversation (including tool messages):")
+    for m in msgs:
+        try:
+            if hasattr(m, "pretty_print"):
+                m.pretty_print()
+            else:
+                print("TOOL/RAW:", m)
+        except Exception as e:
+            print("<<could not render message>>", type(m), m, e)
 
-    async def event_stream() -> AsyncIterator[bytes]:
-        # NOTE: We stream ONLY the chat model token chunks (plain text)
-        async for ev in explainer.app.astream_events(
-            state,
-            config=config,
-            version="v1",
-        ):
-            # Token stream from the model
-            if ev["event"] == "on_chat_model_stream":
-                chunk = ev["data"].get("chunk")
-                if chunk:
-                    # chunk.content can be a string or a list of TextChunks; join safely
-                    try:
-                        text = "".join(getattr(c, "text", "") for c in chunk.content) if hasattr(chunk, "content") else str(chunk)
-                    except Exception:
-                        text = getattr(chunk, "content", "") or getattr(chunk, "text", "") or ""
-                    if text:
-                        yield text.encode("utf-8")
-            # (Optional) If you want to surface tool results inline, handle
-            # `on_tool_end` here and yield a short note/text.
-
-        # Final newline so the client knows we're done
-        yield b"\n"
-
-    # 4) Return a plain-text stream (frontend reads it as a text stream)
-    return StreamingResponse(event_stream(), media_type="text/plain; charset=utf-8")
+    last_ai = next((m.content for m in reversed(msgs) if isinstance(m, AIMessage)), "")
+    return InlineExplainResponse(result=last_ai or "Sorry—I couldn’t generate an explanation.")
