@@ -20,6 +20,8 @@ import json
 from agents.inline_agents.explainer import ExplainerAgent
 from typing import AsyncIterator
 
+from agents.inline_agents.asker import AskerAgent
+
 
 # --- Load env (.env) ---
 load_dotenv()
@@ -441,17 +443,11 @@ class InlineExplainResponse(BaseModel):
     result: str
 
 
-# main.py (endpoint replacement — same behavior, now with pretty print)
-
 from fastapi.responses import StreamingResponse
 from typing import AsyncIterator
 from langchain_core.messages import HumanMessage, AIMessage
 from agents.inline_agents.explainer import ExplainerAgent
 from pydantic import BaseModel
-
-class InlineExplainRequest(BaseModel):
-    highlighted_text: str
-    page_url: str
 
 # @app.post("/inline_explain")
 # async def inline_explain(req: InlineExplainRequest):
@@ -663,3 +659,55 @@ async def inline_explain(req: InlineExplainRequest):
 
     last_ai = next((m.content for m in reversed(msgs) if isinstance(m, AIMessage)), "")
     return InlineExplainResponse(result=last_ai or "Sorry—I couldn’t generate an explanation.")
+
+class InlineAskRequest(BaseModel):
+    highlighted_text: str
+    page_url: str
+    user_query: str
+
+class InlineAskResponse(BaseModel):
+    result: str
+
+
+@app.post("/inline_ask", response_model=InlineAskResponse)
+async def inline_ask(req: InlineAskRequest):
+    # Resolve the page doc (same as inline_explain)
+    current_doc = await _find_doc_for_page(req.page_url)
+    page_content = (
+        (current_doc.get("content")
+         or current_doc.get("page_content")
+         or current_doc.get("text")
+         or current_doc.get("body")
+         or "")
+        if current_doc else ""
+    ).strip()
+
+    asker = AskerAgent(model="gpt-4o-mini", temperature=0.2)
+
+    # tiny debug
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+    print("[inline_ask] user_query:", req.user_query)
+    print("[inline_ask] highlighted_len:", req.highlighted_text, "| page_has_content:", page_content)
+    print("~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~")
+
+    # invoke via the agent's call()
+    msgs = asker.call(
+        user_query=req.user_query,
+        highlighted_text=req.highlighted_text,
+        current_page_content=page_content,
+        thread_id="inline-ask",
+    )
+
+    # pretty print (same style as explain)
+    print("\n🗨️ Full conversation (including tool messages):")
+    for m in msgs:
+        try:
+            if hasattr(m, "pretty_print"):
+                m.pretty_print()
+            else:
+                print("TOOL/RAW:", m)
+        except Exception as e:
+            print("<<could not render message>>", type(m), m, e)
+
+    last_ai = next((m.content for m in reversed(msgs) if isinstance(m, AIMessage)), "")
+    return InlineAskResponse(result=last_ai or "Sorry—I couldn’t generate an answer.")
