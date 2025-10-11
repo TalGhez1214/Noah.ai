@@ -167,6 +167,7 @@ class ManagerAgent:
             "user_query": self.user_query,  # Store the user query in the state
             "agent": None,  # Initially no agent is assigned
             "current_page": self.current_page,
+            "ui_items": None,  # Initialize ui_items as an empty list
         }
         # calling manager agent to start working
         updated = self.app.invoke(graph_state, thread) # Here we added the user query as a new message to the Graph state

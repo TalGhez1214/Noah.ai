@@ -120,11 +120,12 @@ def fallback_agent_prompt(state: AgentState , config: RunnableConfig):
                       - Offer 2–3 quick examples as **bullet points** they can tap/choose.
 
                     4) **Greeting/small talk** (“hey”, “what can you do”, etc.):
-                      - Give a one-sentence welcome and a crisp capability blurb.
                       - Offer 2–3 quick starter suggestions as **bullet points**.
 
                     STYLE & GUARDRAILS
                     - Friendly, concise. No rambling.
+                    - The conversation should be continuous — you must review the entire previous dialogue and respond in context. 
+                    For example, don’t start with a greeting like ‘Hi’ if the user is already in an ongoing conversation.
                     - Never fabricate facts or links. Do not perform unsafe/off-topic tasks.
                     - Ask **at most one** clarifying question per reply.
                     - Whenever you present options or examples, use **bullet points**.
@@ -183,9 +184,9 @@ Rules:
 - If uncertain between two agents, prefer fallback_agent (it will ask a clarifying question).
 
 "summary_agent" Rules:
-- The summary will appear in a modals box with all his details, below the chat -
-so you are not allowed to add them to your final answer.(if you will do it the ser will get them twice) - you just need to inform the user about them.
+- The summary agent will return the summary of the article - You are not allowed to pass the summary detail, or any article details to the user. you should inform the user that you added the summary below.
 - if the agent return empty summary - you should inform the user that you didn't find anything relevant and ask for more details/ suggestions.
+- if the summary agent return a summary in his answer don't call him again!
 
 "articles_finder_agent" Rules:
 - The articles will appear in a modals box with all his details, below the chat -so you are not allowed to add them to your final answer.

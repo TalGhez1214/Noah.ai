@@ -1,7 +1,7 @@
 AGENTS_MODELS = {
-  "supervisor": "openai:gpt-4.1",
+  "supervisor": "openai:gpt-4o",
   "article_finder": "gpt-4o",
-  "summarizer": "gpt-4o",
+  "summarizer": "openai/gpt-oss-20b",
   "qa": "gpt-4o",
   "fallback": "gpt-4o",
   "retriever": "gpt-4o",

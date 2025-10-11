@@ -3,6 +3,7 @@ from typing import Any, Dict
 from pydantic import BaseModel, Field
 
 from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
 from langgraph.prebuilt import ToolNode
@@ -16,6 +17,21 @@ from agents.sub_agents.summarizer.summarizer_tools import (
     summary_article_from_current_page_tool,
     get_articles_from_database_tool,
 )
+
+# Optional: load .env if your app doesn’t already do this at entrypoint
+try:
+    import os
+    from dotenv import load_dotenv  # type: ignore
+    load_dotenv()  # no-op if .env not present
+except Exception:
+    pass
+
+groq_api_key = os.getenv("GROQ_API_KEY", "").strip()
+if not groq_api_key:
+    raise RuntimeError(
+        "GROQ_API_KEY is missing or empty. "
+        "Set it in your environment or .env before starting the app."
+    )
 
 # ---------- Structured Output ----------
 class RespondFormat(BaseModel):
@@ -85,7 +101,8 @@ class SummarizerSubAgent(BaseSubAgent):
         ]
 
         # ---------- LLMs ----------
-        self.llm = ChatOpenAI(model=model, temperature=0.2)
+        #self.llm = ChatOpenAI(model=model, temperature=0.2)
+        self.llm = ChatGroq(model=model, temperature=0.2, api_key=groq_api_key)
         self.tool_enabled_llm = self.llm.bind_tools(self.tools)
         self.parser_model = self.llm.with_structured_output(RespondFormat)
 

@@ -382,6 +382,7 @@ async def ask_stream(req: AskRequest):
                 "user_query": req.query,
                 "agent": None,
                 "current_page": current_doc,
+                "ui_items": None, 
             },
             config={"configurable": {"thread_id": user_id}},
             version="v2",

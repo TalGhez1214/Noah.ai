@@ -14,6 +14,8 @@ from agents.sub_agents.summarizer.summarizer_agent import SummarizerSubAgent
 from agents.prompts import SUMMARY_PROMPT
 import rag.rag_piplines.articles_finder_graph as M
 
+from agents.manager_agent.agents_models import AGENTS_MODELS
+
 load_dotenv()
 
 MONGO_URI = os.getenv("MONGODB_URI")
@@ -42,7 +44,7 @@ def _normalize(s: str) -> str:
 def summarizer_agent():
     return SummarizerSubAgent(
         retriever=M.build_graph(),
-        model="gpt-4o-mini",
+        model=AGENTS_MODELS["summarizer"],
         prompt=SUMMARY_PROMPT,
     )
 
@@ -66,7 +68,7 @@ def article_doc():
         "published_at": "2025-08-09T16:45:00Z",
         "section": None,
         "source": "www.timesofisrael.com",
-        "title": "Jobs in the Age of AI",
+        "title": "The Global Power Shuffle: How Emerging Economies Are Redrawing the Political Map",
     }
 
 
