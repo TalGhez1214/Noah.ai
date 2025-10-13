@@ -19,7 +19,8 @@ class FallbackSubAgent(BaseSubAgent):
         self.description = "Rejects unsupported tasks with a polite message."
         self._prompt = prompt
 
-        llm = ChatGroq(model=model, temperature=0.2)
+        #llm = ChatGroq(model=model, temperature=0.2)
+        llm = ChatOpenAI(model=model, temperature=0.2)
         self.agent = create_react_agent(
             model=llm,
             tools=[],

@@ -69,7 +69,8 @@ class ManagerAgent:
             agents=self._agents
         )
 
-        llm = ChatGroq(model=AGENTS_MODELS["supervisor"], temperature=0.2)
+        #llm = ChatGroq(model=AGENTS_MODELS["supervisor"], temperature=0.2)
+        llm = ChatOpenAI(model=AGENTS_MODELS["supervisor"], temperature=0.2)
         self._supervisor_agent = create_react_agent(
                             model=llm,
                             tools=self._tools,

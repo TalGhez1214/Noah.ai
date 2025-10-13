@@ -55,8 +55,8 @@ class ArticalFinderSubAgent(BaseSubAgent):
 
 
         # ---------- LLMs ----------
-        #self.llm = ChatOpenAI(model=model, temperature=0.2)
-        self.llm = ChatGroq(model=model, temperature=0.2)
+        self.llm = ChatOpenAI(model=model, temperature=0.2)
+        #self.llm = ChatGroq(model=model, temperature=0.2)
         self.parser_model = self.llm.with_structured_output(RespondFormat)
         
     def call(self, state: Dict[str, Any]) -> Dict[str, Any]:

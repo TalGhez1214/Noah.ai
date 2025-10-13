@@ -59,8 +59,8 @@ class QASubAgent:
         self._tools = [web_search_tool]
 
         # ----- Base LLM + ReAct Agent -----
-        #self._llm = ChatOpenAI(model=self.model, temperature=0.2)
-        self._llm = ChatGroq(model=model, temperature=0.2)
+        self._llm = ChatOpenAI(model=self.model, temperature=0.2)
+        #self._llm = ChatGroq(model=model, temperature=0.2)
         self.agent = create_react_agent(
             model=self._llm,
             tools=self._tools,

@@ -101,8 +101,8 @@ class SummarizerSubAgent(BaseSubAgent):
         ]
 
         # ---------- LLMs ----------
-        #self.llm = ChatOpenAI(model=model, temperature=0.2)
-        self.llm = ChatGroq(model=model, temperature=0.2, api_key=groq_api_key)
+        self.llm = ChatOpenAI(model=model, temperature=0.2)
+        #self.llm = ChatGroq(model=model, temperature=0.2, api_key=groq_api_key)
         self.tool_enabled_llm = self.llm.bind_tools(self.tools)
         self.parser_model = self.llm.with_structured_output(RespondFormat)
 
