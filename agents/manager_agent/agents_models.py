@@ -7,6 +7,6 @@ AGENTS_MODELS = {
   "retriever": "llama-3.1-8b-instant",
   "highlighter": "gpt-4o",
   "embeddings": "text-embedding-3-small",
-  "explainer": "openai/gpt-oss-20b",
-  "asker": "openai/gpt-oss-20b",
+  "explainer": "llama-3.3-70b-versatile",
+  "asker": "llama-3.3-70b-versatile",
 }
