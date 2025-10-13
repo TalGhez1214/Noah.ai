@@ -2,12 +2,14 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, List
 from datetime import date
 
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, BaseMessage
 from langchain_community.tools.tavily_search import TavilySearchResults
 
 from agents.inline_agents.prompts import asker_prompt
+from agents.manager_agent.agents_models import AGENTS_MODELS
+
 
 class AskerAgent:
     """
@@ -16,8 +18,10 @@ class AskerAgent:
     - May use Tavily web_search for clarifications/updates.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.2):
-        self.llm = ChatOpenAI(model=model, temperature=temperature)
+    def __init__(self, model: Optional[str] = None, temperature: float = 0.2):
+        # Use centralized model id from agents_models.py
+        model = model or AGENTS_MODELS["asker"]
+        self.llm = ChatGroq(model=model, temperature=temperature)
         self.tools = [
             TavilySearchResults(
                 max_results=5,
@@ -32,8 +36,14 @@ class AskerAgent:
             name="asker",
         )
 
-    def call(self, *, user_query: str, highlighted_text: str, current_page_content: str,
-            thread_id: Optional[str] = None, ) -> List[BaseMessage]:
+    def call(
+        self,
+        *,
+        user_query: str,
+        highlighted_text: str,
+        current_page_content: str,
+        thread_id: Optional[str] = None,
+    ) -> List[BaseMessage]:
         # human message mostly for conversational flavor (prompt carries the grounding)
         human = HumanMessage(content=user_query or "Ask about the highlighted selection in context.")
         state: Dict[str, Any] = {"messages": [human]}

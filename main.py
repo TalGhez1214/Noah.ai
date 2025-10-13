@@ -558,7 +558,7 @@ async def inline_explain_stream(req: InlineExplainRequest):
         if current_doc else ""
     ).strip()
 
-    explainer = ExplainerAgent(model="gpt-4o-mini", temperature=0.2)
+    explainer = ExplainerAgent()
 
     async def gen():
         last_state = None
@@ -627,7 +627,7 @@ async def inline_ask_stream(req: InlineAskStreamRequest):
         if current_doc else ""
     ).strip()
 
-    asker = AskerAgent(model="gpt-4o-mini", temperature=0.2)
+    asker = AskerAgent()
 
     async def gen():
         last_state = None

@@ -10,7 +10,7 @@
 # from langgraph.prebuilt import create_react_agent
 
 # from .base import BaseSubAgent
-# from agents.prompts import HIGHLIGHTER_PROMPT  # ← use the shared prompt  :contentReference[oaicite:0]{index=0}
+# from agents.prompts import HIGHLIGHTER_PROMPT
 
 
 # @dataclass
@@ -56,8 +56,8 @@
 #     """
 #     Snap LLM-proposed spans to the real content, then expand to full sentence boundaries:
 #       - clamp indices
-#       - if 'sentence' exists, search near the suggested start (±300 chars), then globally (case-sensitive then -insensitive)
-#       - set (start,end) to the FULL sentence that contains the match (no mid-sentence highlights)
+#       - try to locate 'sentence' near start hint, then globally (case-sensitive then insensitive)
+#       - expand to full sentence (no mid-sentence highlights)
 #       - de-duplicate and sort
 #     """
 #     if not spans:
@@ -86,27 +86,23 @@
 #         idx = text.lower().find(sentence.lower())
 #         return idx
 
-#     # sentence boundary approximation: ., !, ? followed by space/newline or end-of-text
 #     boundary_re = re.compile(r"[.!?]")
 
 #     def expand_to_sentence(start_idx: int, end_idx: int) -> (int, int):
-#         # Move left to previous boundary (or start)
-#         left = 0
+#         # left boundary
 #         prev = -1
 #         for m in boundary_re.finditer(text, 0, start_idx):
-#             prev = m.end()  # position after punctuation
+#             prev = m.end()
 #         left = prev if prev != -1 else 0
 #         while left < L and text[left] in " \t\r\n":
 #             left += 1
-
-#         # Move right to next boundary (or end)
+#         # right boundary
 #         right = L
 #         m = boundary_re.search(text, end_idx)
 #         if m:
 #             right = m.end()
 #         while right < L and text[right] in " \t":
 #             right += 1
-
 #         left = clamp(left, 0, L)
 #         right = clamp(right, left, L)
 #         return left, right
@@ -160,8 +156,8 @@
 
 # class HighlighterSubAgent(BaseSubAgent):
 #     """
-#     ReAct sub-agent (no tools) that asks the LLM to select highlight spans from the article
-#     and then fixes offsets to match the exact content before returning them.
+#     ReAct sub-agent (no tools) that asks the LLM to select highlight spans from the article,
+#     normalizes them to sentence boundaries, then returns them via ui_items so the UI can apply.
 #     """
 
 #     def __init__(self, model: str = "gpt-4o-mini", prompt: str = HIGHLIGHTER_PROMPT) -> None:
@@ -172,8 +168,8 @@
 #         llm = ChatOpenAI(model=model, temperature=0)
 #         self.agent = create_react_agent(
 #             model=llm,
-#             tools=[],              # LLM decides; no tools
-#             prompt=self.prompt,    # ← shared prompt injected here
+#             tools=[],
+#             prompt=self.prompt,
 #             name="highlighter",
 #         )
 
@@ -181,13 +177,6 @@
 #         return ""
 
 #     def call(self, state: Dict[str, Any]) -> Dict[str, Any]:
-#         """
-#         Expects:
-#           - state['user_query']: str
-#           - state['current_page']: {'content': str, ...}
-#         Returns (for manager graph):
-#           - {"messages": [AIMessage], "agent": self.name}
-#         """
 #         user_query: str = state.get("user_query") or ""
 #         page: Optional[Dict[str, Any]] = state.get("current_page") or {}
 #         content: str = page.get("content") or ""
@@ -205,8 +194,11 @@
 #         spans = _parse_spans(raw_json)
 #         normalized = _normalize_spans(content, spans)
 
-#         response_content = "```json\n" + json.dumps(normalized, ensure_ascii=False) + "\n```"
-#         return {"messages": [AIMessage(content=response_content)], "agent": self.name}
+#         # 👇 Return highlights via ui_items (just like summarizer returns summary ui_items)
+#         return {
+#             "ui_items": {"type": "highlights", "data": normalized},
+#             "agent": self.name,
+#         }
 
 # agents/sub_agents/highlighter.py
 from __future__ import annotations
@@ -215,12 +207,13 @@ from dataclasses import dataclass
 import json
 import re
 
-from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
 
 from .base import BaseSubAgent
 from agents.prompts import HIGHLIGHTER_PROMPT
+from agents.manager_agent.agents_models import AGENTS_MODELS
 
 
 @dataclass
@@ -370,12 +363,15 @@ class HighlighterSubAgent(BaseSubAgent):
     normalizes them to sentence boundaries, then returns them via ui_items so the UI can apply.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini", prompt: str = HIGHLIGHTER_PROMPT) -> None:
+    def __init__(self, model: Optional[str] = None, prompt: str = HIGHLIGHTER_PROMPT) -> None:
         self.name = "highlighter_agent"
         self.description = "Highlight the most relevant passages in the current article for the user's query."
         self.prompt = prompt
 
-        llm = ChatOpenAI(model=model, temperature=0)
+        # Use Groq model from centralized config (fallback provided)
+        model_id = model or AGENTS_MODELS.get("highlighter", "openai/gpt-oss-20b")
+        llm = ChatGroq(model=model_id, temperature=0)
+
         self.agent = create_react_agent(
             model=llm,
             tools=[],

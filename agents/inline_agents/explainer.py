@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Any, Dict, Optional, List
 from datetime import date
 
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI  # (left as-is; unused)
+from langchain_groq import ChatGroq
 from langgraph.prebuilt import create_react_agent
 from langchain_core.messages import HumanMessage, BaseMessage
 
@@ -14,7 +15,8 @@ from langchain_community.tools.tavily_search import TavilySearchResults
 # from langchain_tavily import TavilySearch as TavilySearchResults
 
 from agents.inline_agents.prompts import explainer_prompt
-from agents.prompts import qa_prompt
+from agents.prompts import qa_prompt  # (left as-is; unused)
+from agents.manager_agent.agents_models import AGENTS_MODELS
 
 
 class ExplainerAgent:
@@ -24,12 +26,13 @@ class ExplainerAgent:
     - May use Tavily web_search for definitions/updates.
     """
 
-    def __init__(self, model: str = "gpt-4o-mini", temperature: float = 0.2):
-        self.model_name = model
+    def __init__(self, model: Optional[str] = None, temperature: float = 0.2):
+        self.model_name = model or AGENTS_MODELS["explainer"]
         self.temperature = temperature
 
-        # LLM
-        self.llm = ChatOpenAI(model=model, temperature=temperature)
+        # LLM (Groq)
+        # self.llm = ChatOpenAI(model=model, temperature=temperature)
+        self.llm = ChatGroq(model=self.model_name, temperature=temperature)
 
         # Tools (Tavily web search)
         self.tools = [
@@ -44,12 +47,17 @@ class ExplainerAgent:
         self.app = create_react_agent(
             model=self.llm,
             tools=self.tools,
-            prompt=explainer_prompt,  # from agents/inline_agents/propmts.py
+            prompt=explainer_prompt,  # from agents/inline_agents/prompts.py
             name="explainer",
         )
 
-    def call(self, highlighted_text: str, current_page_content: str, user_query_hint: Optional[str] = None, 
-             thread_id: Optional[str] = None) -> List[BaseMessage]:
+    def call(
+        self,
+        highlighted_text: str,
+        current_page_content: str,
+        user_query_hint: Optional[str] = None,
+        thread_id: Optional[str] = None,
+    ) -> List[BaseMessage]:
         """
         Invoke the agent directly. Pass thread_id if you want per-user traces.
         """

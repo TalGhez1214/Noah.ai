@@ -5,6 +5,8 @@ AGENTS_MODELS = {
   "qa": "gpt-4o",
   "fallback": "gpt-4o",
   "retriever": "gpt-4o",
-  "highlighter": "gpt-4o",
+  "highlighter": "openai/gpt-oss-20b",
   "embeddings": "text-embedding-3-small",
+  "explainer": "openai/gpt-oss-20b",
+  "asker": "openai/gpt-oss-20b",
 }
