@@ -4,6 +4,7 @@ from datetime import date
 import json
 
 from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_core.tools import tool
 from langchain_core.messages import ToolMessage, HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent, InjectedState
@@ -58,7 +59,8 @@ class QASubAgent:
         self._tools = [web_search_tool]
 
         # ----- Base LLM + ReAct Agent -----
-        self._llm = ChatOpenAI(model=self.model, temperature=0.2)
+        #self._llm = ChatOpenAI(model=self.model, temperature=0.2)
+        self._llm = ChatGroq(model=model, temperature=0.2)
         self.agent = create_react_agent(
             model=self._llm,
             tools=self._tools,

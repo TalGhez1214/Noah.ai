@@ -41,6 +41,7 @@ from agents.manager_agent.agents_models import AGENTS_MODELS
 from sentence_transformers import CrossEncoder
 import numpy as np
 from openai import OpenAI
+from langchain_groq import ChatGroq
 from bson import ObjectId  # <-- NEW: for converting back during $match
 
 # prompts
@@ -116,7 +117,8 @@ class SearchState:
 # MODELS
 # ======================
 
-LLM = ChatOpenAI(model=AGENTS_MODELS["retriever"], temperature=0)
+#LLM = ChatOpenAI(model=AGENTS_MODELS["retriever"], temperature=0)
+LLM = ChatGroq(model=AGENTS_MODELS["retriever"], temperature=0)
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 CE  = CrossEncoder(CROSS_ENCODER_MODEL) if USE_CROSS_ENCODER else None
 

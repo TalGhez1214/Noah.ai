@@ -1,6 +1,7 @@
 from __future__ import annotations
 from typing import Any, Dict
 from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain.prompts import PromptTemplate
 from langgraph.prebuilt import create_react_agent
 from .base import BaseSubAgent
@@ -18,7 +19,7 @@ class FallbackSubAgent(BaseSubAgent):
         self.description = "Rejects unsupported tasks with a polite message."
         self._prompt = prompt
 
-        llm = ChatOpenAI(model=model, temperature=0)
+        llm = ChatGroq(model=model, temperature=0.2)
         self.agent = create_react_agent(
             model=llm,
             tools=[],

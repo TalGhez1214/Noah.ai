@@ -1,6 +1,7 @@
 from typing import List
 from langgraph.prebuilt import create_react_agent
 from langchain_openai import ChatOpenAI
+from langchain_groq import ChatGroq
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.output_parsers import StructuredOutputParser, ResponseSchema
 from agents.prompts import article_finder_prompt
@@ -54,7 +55,8 @@ class ArticalFinderSubAgent(BaseSubAgent):
 
 
         # ---------- LLMs ----------
-        self.llm = ChatOpenAI(model=model, temperature=0.2)
+        #self.llm = ChatOpenAI(model=model, temperature=0.2)
+        self.llm = ChatGroq(model=model, temperature=0.2)
         self.parser_model = self.llm.with_structured_output(RespondFormat)
         
     def call(self, state: Dict[str, Any]) -> Dict[str, Any]:

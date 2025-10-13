@@ -16,6 +16,7 @@ from agents.sub_agents.article_finder.articles_finder_agent import ArticalFinder
 from agents.sub_agents.fallback import FallbackSubAgent
 from agents.sub_agents.highlighter import HighlighterSubAgent
 from agents.manager_agent.agents_models import AGENTS_MODELS
+from langchain_groq import ChatGroq
 
 # ---- import search graph module ----
 import rag.rag_piplines.articles_finder_graph as M
@@ -68,8 +69,9 @@ class ManagerAgent:
             agents=self._agents
         )
 
+        llm = ChatGroq(model=AGENTS_MODELS["supervisor"], temperature=0.2)
         self._supervisor_agent = create_react_agent(
-                            model=AGENTS_MODELS["supervisor"],
+                            model=llm,
                             tools=self._tools,
                             prompt=SUPERVISOR_PROMPT,
                             name="supervisor",
