@@ -210,6 +210,7 @@ import re
 from langchain_groq import ChatGroq
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langgraph.prebuilt import create_react_agent
+from langchain_openai import ChatOpenAI
 
 from .base import BaseSubAgent
 from agents.prompts import HIGHLIGHTER_PROMPT
@@ -369,8 +370,9 @@ class HighlighterSubAgent(BaseSubAgent):
         self.prompt = prompt
 
         # Use Groq model from centralized config (fallback provided)
-        model_id = model or AGENTS_MODELS.get("highlighter", "openai/gpt-oss-20b")
-        llm = ChatGroq(model=model_id, temperature=0)
+        model_id = model or AGENTS_MODELS.get("highlighter", "gpt-4o-mini")
+        llm = ChatOpenAI(model=model_id, temperature=0)
+        #llm = ChatGroq(model=model_id, temperature=0)
 
         self.agent = create_react_agent(
             model=llm,
