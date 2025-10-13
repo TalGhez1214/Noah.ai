@@ -7,4 +7,6 @@ AGENTS_MODELS = {
   "retriever": "openai/gpt-oss-20b",
   "highlighter": "openai/gpt-oss-20b",
   "embeddings": "text-embedding-3-small",
+  "explainer": "openai/gpt-oss-20b",
+  "asker": "openai/gpt-oss-20b",
 }
